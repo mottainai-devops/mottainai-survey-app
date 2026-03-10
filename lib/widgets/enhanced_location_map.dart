@@ -50,6 +50,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   List<Polygon> _polygonOverlays = [];
   List<Marker> _polygonLabels = [];
 
+  // Track whether the FlutterMap controller is ready to accept move() calls
+  bool _mapReady = false;
+  LatLng? _pendingCenter;
+
   @override
   void initState() {
     super.initState();
@@ -97,22 +101,27 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         }
       });
 
-      // Move map to GPS location — use a small delay so the FlutterMap
-      // widget has finished its first layout before we call move().
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted && _selectedLocation != null) {
-          _mapController.move(_selectedLocation!, 18.5);
-        }
+      // Store the GPS location as pending center.
+      // The actual move() is called in _onMapReady() once the FlutterMap
+      // controller is ready — this avoids the race condition where move()
+      // is called before the map has finished its first layout.
+      setState(() {
+        _pendingCenter = _currentLocation;
       });
+      if (_mapReady && _currentLocation != null) {
+        _mapController.move(_currentLocation!, 18.5);
+      }
 
       await _loadPolygonsForCurrentLocation();
 
       // Re-center after polygons load in case the map drifted
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted && _currentLocation != null) {
-          _mapController.move(_currentLocation!, 18.5);
-        }
-      });
+      if (_mapReady && _currentLocation != null) {
+        _mapController.move(_currentLocation!, 18.5);
+      } else {
+        setState(() {
+          _pendingCenter = _currentLocation;
+        });
+      }
     } catch (e) {
       setState(() {
         _error = 'Failed to get location: $e';
@@ -905,6 +914,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                         _selectedLocation ?? const LatLng(6.5795, 3.3549),
                     initialZoom: 18.5,
                     onTap: _onMapTap,
+                    onMapReady: () {
+                      _mapReady = true;
+                      // If GPS was obtained before the map was ready, move now
+                      final center = _pendingCenter ?? _currentLocation;
+                      if (center != null) {
+                        _mapController.move(center, 18.5);
+                        setState(() {
+                          _pendingCenter = null;
+                        });
+                      }
+                    },
                   ),
                   children: [
                     // Satellite imagery base layer

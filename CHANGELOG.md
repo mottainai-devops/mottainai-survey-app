@@ -2,6 +2,17 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.11] - 2026-03-10
+
+### Fixed
+- **Map camera not centering on GPS location (CRITICAL)**: Polygons and labels appeared at wrong position
+  - Root cause: `mapController.move()` was called before FlutterMap controller was ready (race condition)
+  - Fix: added `onMapReady` callback to FlutterMap; GPS location is stored as `_pendingCenter` and applied as soon as the map is ready
+  - If GPS is obtained before map is ready, the pending center is applied in `onMapReady`
+  - If map is ready before GPS, `move()` is called immediately when GPS resolves
+
+---
+
 ## [3.2.10] - 2026-03-10
 
 ### Fixed
