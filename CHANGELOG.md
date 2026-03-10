@@ -2,6 +2,18 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.8] - 2026-03-10
+
+### Fixed
+- **Polygon coordinates in wrong projection (CRITICAL)**: Building polygons were being drawn ~80km away from actual buildings
+  - Root cause: ArcGIS service stores data in a local Nigerian projection (not standard Web Mercator). The old conversion formula produced wrong coordinates (e.g. lat=7.35, lon=3.88 instead of lat=6.58, lon=3.35)
+  - Fix: added `outSR=4326` to all ArcGIS queries — server now returns WGS84 (lon, lat) directly, no client-side conversion needed
+  - Removed the incorrect `webMercatorToWGS84()` conversion from `BuildingPolygon.fromArcGIS()`
+  - Database upgraded to v9; existing cached polygons with wrong coordinates are cleared automatically on first launch
+  - Polygons now render correctly on the satellite map and tap detection works
+
+---
+
 ## [3.2.7] - 2026-03-10
 
 ### Fixed
@@ -131,6 +143,9 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 
 ## Version History
 
+- **v3.2.8** (Mar 10, 2026) - Polygon coordinate projection fix
+- **v3.2.7** (Mar 10, 2026) - ArcGIS connection abort fix (pagination + 500m radius)
+- **v3.2.6** (Mar 10, 2026) - ArcGIS invalid query parameters fix (inSR=4326)
 - **v3.2.5** (Mar 10, 2026) - Customer contact fields + backend submission fix
 - **v3.2.4** (Dec 2, 2025) - Sync status display fix
 - **v3.2.3** (Nov 28, 2025) - Offline support and auto-sync

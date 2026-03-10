@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 
 class BuildingPolygon {
   final String buildingId;
@@ -9,7 +8,7 @@ class BuildingPolygon {
   final String? address;
   final String? zone;
   final String? socioEconomicGroups;
-  final String geometry; // GeoJSON polygon
+  final String geometry; // GeoJSON polygon (WGS84)
   final double centerLat;
   final double centerLon;
   final DateTime lastUpdated;
@@ -30,51 +29,53 @@ class BuildingPolygon {
     this.customerLabels,
   });
 
-  // Convert Web Mercator (EPSG:3857) to WGS84 (EPSG:4326)
-  static Map<String, double> webMercatorToWGS84(double x, double y) {
-    const double earthRadius = 6378137.0;
-    final lon = (x / earthRadius) * (180 / 3.141592653589793);
-    final lat = (2 * 3.141592653589793 / 4 - 2 * atan(exp(-y / earthRadius))) * (180 / 3.141592653589793);
-    return {'lat': lat, 'lon': lon};
-  }
-  
-  // From ArcGIS Feature Service response
+  /// Parse an ArcGIS Feature Service response feature.
+  ///
+  /// IMPORTANT: The ArcGIS query MUST include `outSR=4326` so the server
+  /// returns coordinates in WGS84 (lon, lat). Without outSR=4326 the service
+  /// returns a local Nigerian projection whose values look like (432303, 821170)
+  /// — those are NOT standard Web Mercator and the old conversion formula
+  /// placed polygons ~80km away from the actual buildings.
   factory BuildingPolygon.fromArcGIS(Map<String, dynamic> feature) {
     final attributes = feature['attributes'] as Map<String, dynamic>;
-    final geometry = feature['geometry'];
-    
-    // Convert polygon rings from Web Mercator to WGS84
+    final geometry = feature['geometry'] as Map<String, dynamic>;
+
+    // Coordinates are already WGS84 (lon, lat) because we pass outSR=4326
     final rings = geometry['rings'] as List;
-    List<List<List<double>>> convertedRings = [];
+
     double sumLat = 0, sumLon = 0;
     int count = 0;
-    
-    if (rings.isNotEmpty) {
-      for (var ring in rings) {
-        List<List<double>> convertedRing = [];
-        for (var point in ring) {
-          if (point is List && point.length >= 2) {
-            // Handle both int and double from ArcGIS API
-            final webMercX = (point[0] is int) ? (point[0] as int).toDouble() : point[0] as double;
-            final webMercY = (point[1] is int) ? (point[1] as int).toDouble() : point[1] as double;
-            final wgs84 = webMercatorToWGS84(webMercX, webMercY);
-            convertedRing.add([wgs84['lon']!, wgs84['lat']!]);
-            sumLon += wgs84['lon']!;
-            sumLat += wgs84['lat']!;
-            count++;
-          }
+    List<List<List<double>>> wgs84Rings = [];
+
+    for (var ring in rings) {
+      final ringList = ring as List;
+      List<List<double>> wgs84Ring = [];
+      for (var point in ringList) {
+        if (point is List && point.length >= 2) {
+          // ArcGIS returns [lon, lat] when outSR=4326
+          final lon = (point[0] is int)
+              ? (point[0] as int).toDouble()
+              : point[0] as double;
+          final lat = (point[1] is int)
+              ? (point[1] as int).toDouble()
+              : point[1] as double;
+          wgs84Ring.add([lon, lat]);
+          sumLon += lon;
+          sumLat += lat;
+          count++;
         }
-        convertedRings.add(convertedRing);
+      }
+      if (wgs84Ring.isNotEmpty) {
+        wgs84Rings.add(wgs84Ring);
       }
     }
-    
+
     final centerLon = count > 0 ? sumLon / count : 0.0;
     final centerLat = count > 0 ? sumLat / count : 0.0;
-    
-    // Create WGS84 geometry object
+
     final wgs84Geometry = {
-      'rings': convertedRings,
-      'spatialReference': {'wkid': 4326}
+      'rings': wgs84Rings,
+      'spatialReference': {'wkid': 4326},
     };
 
     return BuildingPolygon(
@@ -123,7 +124,8 @@ class BuildingPolygon {
       geometry: map['geometry'] as String,
       centerLat: map['centerLat'] as double,
       centerLon: map['centerLon'] as double,
-      lastUpdated: DateTime.fromMillisecondsSinceEpoch(map['lastUpdated'] as int),
+      lastUpdated:
+          DateTime.fromMillisecondsSinceEpoch(map['lastUpdated'] as int),
       customerLabels: map['customerLabels'] as String?,
     );
   }

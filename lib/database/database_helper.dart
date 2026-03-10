@@ -20,7 +20,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -87,6 +87,13 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 9) {
+      // Clear cached polygons - v3.2.8 fixes coordinate projection (outSR=4326)
+      // Old cache has wrong coordinates (local Nigerian projection, ~80km off)
+      await db.execute('DELETE FROM cached_polygons');
+      print('Cleared polygon cache: coordinates were in wrong projection (v3.2.8 fix)');
+    }
+
     if (oldVersion < 8) {
       // Add customer contact columns to pickups table (v3.2.5)
       const textNullable = 'TEXT';

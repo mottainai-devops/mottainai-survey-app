@@ -51,6 +51,7 @@ class ArcGISService {
           'outFields':
               'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
           'returnGeometry': 'true',
+          'outSR': '4326', // Return coordinates in WGS84 (lon, lat) - avoids local projection issues
           'resultRecordCount': _pageSize.toString(),
           'resultOffset': offset.toString(),
           'f': 'json',
@@ -122,6 +123,7 @@ class ArcGISService {
         'outFields':
             'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
         'returnGeometry': 'true',
+        'outSR': '4326', // Return coordinates in WGS84 (lon, lat)
         'f': 'json',
         // Service is public - no token required
       };
