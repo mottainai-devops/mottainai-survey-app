@@ -2,6 +2,20 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.9] - 2026-03-10
+
+### Fixed
+- **Polygon overlays not visible and not tappable**: Building polygons were cached but not rendered on the map
+  - Root cause 1: Polygon overlays were rebuilt on every `build()` call with 600 JSON decodes — UI thread froze, preventing render
+  - Root cause 2: Cache query used 5km radius but sync only fetched 500m, so cache returned buildings from wrong area
+  - Root cause 3: Customer label API was called for all 600 buildings simultaneously, causing server overload and app crash
+  - Fix: Polygon overlays are now pre-built and stored in state (`_polygonOverlays`, `_polygonLabels`), rebuilt only when data changes
+  - Fix: Cache query radius aligned to 500m to match sync radius
+  - Fix: Customer label fetching limited to the 20 nearest buildings
+  - Fix: Map now centers on user GPS location on open via `_mapController.move()` in `addPostFrameCallback`
+
+---
+
 ## [3.2.8] - 2026-03-10
 
 ### Fixed
