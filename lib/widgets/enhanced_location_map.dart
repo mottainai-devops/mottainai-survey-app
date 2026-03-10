@@ -44,11 +44,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   List<BuildingPolygon> _cachedPolygons = [];
   BuildingPolygon? _selectedPolygon;
   String? _cacheInfo;
-  Map<String, String> _customerLabelsCache = {};
+
+  // Map of buildingId → customer name (only for captured buildings)
+  Map<String, String> _customerNamesCache = {};
 
   // Pre-built polygon overlays — rebuilt only when _cachedPolygons changes
   List<Polygon> _polygonOverlays = [];
-  List<Marker> _polygonLabels = [];
+  // Labels only for captured buildings (show business name)
+  List<Marker> _capturedLabels = [];
+
+  // flutter_map v7 hit notifier for polygon tap detection
+  final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
 
   // Sync progress text shown during loading
   String _syncProgressText = 'Loading buildings...';
@@ -61,6 +67,12 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   void initState() {
     super.initState();
     _initializeLocation();
+  }
+
+  @override
+  void dispose() {
+    _polygonHitNotifier.dispose();
+    super.dispose();
   }
 
   Future<void> _initializeLocation() async {
@@ -167,8 +179,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             'First polygon: ${cachedPolygons[0].buildingId} at (${cachedPolygons[0].centerLat}, ${cachedPolygons[0].centerLon})');
       }
 
-      // Fetch customer labels only for the nearest 20 buildings to avoid API overload
-      _fetchCustomerLabelsForPolygons(cachedPolygons.take(20).toList());
+      // Fetch customer names for captured buildings (nearest 30)
+      _fetchCustomerNamesForPolygons(cachedPolygons.take(30).toList());
 
       // Sync from ArcGIS if cache is empty or stale
       if (cachedPolygons.isEmpty || await _polygonService.needsRefresh()) {
@@ -294,69 +306,42 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
+  // ─── Polygon tap via flutter_map v7 hitNotifier ────────────────────────────
+
+  /// Called when the GestureDetector wrapping PolygonLayer detects a tap.
+  /// Reads the hitNotifier to find which polygon was tapped.
+  void _onPolygonTap() {
+    final hitResult = _polygonHitNotifier.value;
+    if (hitResult == null || hitResult.hitValues.isEmpty) return;
+
+    // hitValues is ordered top-to-bottom; take the topmost (first) polygon
+    final buildingId = hitResult.hitValues.first;
+    final tappedPolygon = _cachedPolygons.firstWhere(
+      (p) => p.buildingId == buildingId,
+      orElse: () => _cachedPolygons.first,
+    );
+
+    _showBuildingInfoPopup(tappedPolygon);
+  }
+
   void _onMapTap(TapPosition tapPosition, LatLng position) {
-    BuildingPolygon? tappedPolygon = _findPolygonAtPoint(position);
-
-    if (tappedPolygon != null) {
-      _showBuildingInfoPopup(tappedPolygon);
-    } else {
-      setState(() {
-        _selectedLocation = position;
-        _selectedPolygon = null;
-      });
-      widget.onLocationSelected(position.latitude, position.longitude);
+    // If a polygon was tapped, the GestureDetector around PolygonLayer handles it.
+    // This handler only fires when tapping empty map space.
+    final hitResult = _polygonHitNotifier.value;
+    if (hitResult != null && hitResult.hitValues.isNotEmpty) {
+      // A polygon was under the tap — let the polygon GestureDetector handle it
+      return;
     }
+
+    setState(() {
+      _selectedLocation = position;
+      _selectedPolygon = null;
+    });
+    widget.onLocationSelected(position.latitude, position.longitude);
   }
 
-  BuildingPolygon? _findPolygonAtPoint(LatLng point) {
-    for (var polygon in _cachedPolygons) {
-      if (_isPointInPolygon(point, polygon)) {
-        return polygon;
-      }
-    }
-    return null;
-  }
-
-  bool _isPointInPolygon(LatLng point, BuildingPolygon polygon) {
-    try {
-      final geometryJson = jsonDecode(polygon.geometry);
-      final rings = geometryJson['rings'] as List;
-      if (rings.isEmpty) return false;
-
-      final ring = rings[0] as List;
-      bool inside = false;
-      int j = ring.length - 1;
-
-      for (int i = 0; i < ring.length; i++) {
-        final xi = (ring[i][0] is int)
-            ? (ring[i][0] as int).toDouble()
-            : ring[i][0] as double;
-        final yi = (ring[i][1] is int)
-            ? (ring[i][1] as int).toDouble()
-            : ring[i][1] as double;
-        final xj = (ring[j][0] is int)
-            ? (ring[j][0] as int).toDouble()
-            : ring[j][0] as double;
-        final yj = (ring[j][1] is int)
-            ? (ring[j][1] as int).toDouble()
-            : ring[j][1] as double;
-
-        final intersect = ((yi > point.latitude) != (yj > point.latitude)) &&
-            (point.longitude <
-                (xj - xi) * (point.latitude - yi) / (yj - yi) + xi);
-
-        if (intersect) inside = !inside;
-        j = i;
-      }
-
-      return inside;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// Fetch customer labels — limited to [polygons] (max 20) to avoid API overload.
-  Future<void> _fetchCustomerLabelsForPolygons(
+  /// Fetch customer names for captured buildings — limited to [polygons] to avoid API overload.
+  Future<void> _fetchCustomerNamesForPolygons(
       List<BuildingPolygon> polygons) async {
     for (var polygon in polygons) {
       if (!mounted) return;
@@ -366,13 +351,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         if (result['success'] == true && result['existingCustomers'] != null) {
           final customers = result['existingCustomers'] as List;
           if (customers.isNotEmpty) {
-            final labels =
-                customers.map((c) => c['label'] as String).join(',');
+            // Use the first customer's business name as the label
+            final name = (customers[0]['name'] as String?) ??
+                (customers[0]['label'] as String? ?? polygon.buildingId);
             if (mounted) {
               setState(() {
-                _customerLabelsCache[polygon.buildingId] = labels;
+                _customerNamesCache[polygon.buildingId] = name;
               });
-              // Rebuild labels layer to show updated colours
+              // Rebuild labels layer to show updated labels
               _rebuildOverlays();
             }
           }
@@ -385,11 +371,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   // ─── Overlay builders (called once after data changes, not on every build) ───
 
-  /// Rebuild both polygon fill layer and label marker layer.
-  /// Call this after _cachedPolygons or _customerLabelsCache changes.
+  /// Rebuild both polygon fill layer and captured-building label marker layer.
+  /// Call this after _cachedPolygons or _customerNamesCache changes.
   void _rebuildOverlays() {
     final overlays = <Polygon>[];
-    final labels = <Marker>[];
+    final capturedLabels = <Marker>[];
 
     print('[MAP] _rebuildOverlays called with ${_cachedPolygons.length} polygons');
 
@@ -410,78 +396,107 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           return LatLng(lat, lon);
         }).toList();
 
-        if (points.isEmpty) continue;
+        if (points.length < 3) continue;
 
         final isSelected = _selectedPolygon?.buildingId == bp.buildingId;
+        final isCaptured = _customerNamesCache.containsKey(bp.buildingId);
         final polygonColor = _getPolygonColor(bp.buildingId);
 
+        // ── Polygon fill + border ──
         overlays.add(Polygon(
           points: points,
-          // color controls fill; non-null = filled, null = no fill
+          // hitValue enables flutter_map v7 hit detection
+          hitValue: bp.buildingId,
+          // color controls fill; non-null = filled
           color: isSelected
               ? Colors.blue.withValues(alpha: 0.5)
-              : polygonColor.withValues(alpha: 0.35),
-          borderColor: isSelected ? Colors.blue : polygonColor,
-          borderStrokeWidth: isSelected ? 5.0 : 3.0,
+              : isCaptured
+                  ? Colors.green.withValues(alpha: 0.35)
+                  : polygonColor.withValues(alpha: 0.25),
+          borderColor: isSelected
+              ? Colors.blue
+              : isCaptured
+                  ? Colors.green.shade700
+                  : polygonColor,
+          borderStrokeWidth: isSelected ? 5.0 : 2.5,
         ));
 
-        // Label — only shown when zoom >= 17 (handled by keeping markers small)
         final center = _getPolygonCenter(points);
-        final customerLabels = _customerLabelsCache[bp.buildingId];
-        final hasCustomers =
-            customerLabels != null && customerLabels.isNotEmpty;
-        final labelColor =
-            hasCustomers ? Colors.green.shade700 : Colors.blue.shade700;
-        final displayText = bp.buildingId;
 
-        labels.add(Marker(
+        // ── Building ID label — always shown on the polygon (small, subtle) ──
+        // This is a tiny text marker sitting at the polygon center
+        capturedLabels.add(Marker(
           point: center,
-          width: 110,
-          height: 22,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              if (hasCustomers) {
-                _showExistingCustomersDialog(bp);
-              } else {
-                _selectPolygonDirectly(bp);
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: labelColor.withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.white, width: 1),
+          width: 90,
+          height: 16,
+          child: IgnorePointer(
+            // Building ID labels don't intercept taps — polygon GestureDetector handles it
+            child: Text(
+              bp.buildingId,
+              style: TextStyle(
+                color: isCaptured
+                    ? Colors.green.shade900
+                    : Colors.blue.shade900,
+                fontSize: 7,
+                fontWeight: FontWeight.bold,
+                shadows: const [
+                  Shadow(
+                    color: Colors.white,
+                    blurRadius: 3,
+                    offset: Offset(0, 0),
+                  ),
+                ],
               ),
-              child: Text(
-                displayText,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold,
-                ),
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
         ));
+
+        // ── Business name label — only for captured buildings ──
+        if (isCaptured) {
+          final businessName = _customerNamesCache[bp.buildingId]!;
+          capturedLabels.add(Marker(
+            point: LatLng(center.latitude + 0.00004, center.longitude),
+            width: 120,
+            height: 22,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => _showExistingCustomersDialog(bp),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade700.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.white, width: 1),
+                ),
+                child: Text(
+                  businessName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+            ),
+          ));
+        }
       } catch (e) {
         print('Error building overlay for ${bp.buildingId}: $e');
       }
     }
 
-    print('[MAP] Built ${overlays.length} polygon overlays and ${labels.length} labels');
-    if (overlays.isNotEmpty) {
-      final sample = overlays[0];
-      print('[MAP] Sample polygon: ${sample.points.length} points, first=${sample.points.isNotEmpty ? sample.points[0] : "none"}');
-    }
+    print('[MAP] Built ${overlays.length} polygon overlays, ${capturedLabels.length} labels');
 
     setState(() {
       _polygonOverlays = overlays;
-      _polygonLabels = labels;
+      _capturedLabels = capturedLabels;
     });
   }
 
@@ -528,6 +543,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         return;
       }
 
+      if (!mounted) return;
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -633,8 +649,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                                 ],
                               ),
                             ),
-                            Icon(Icons.arrow_forward_ios,
-                                size: 16, color: Colors.grey.shade400),
                           ],
                         ),
                       ),
@@ -647,6 +661,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('Cancel'),
             ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _selectPolygonDirectly(polygon);
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade700),
+              child: const Text('Add New Pickup',
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
       );
@@ -655,7 +680,174 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
-  void _selectPolygonDirectly(BuildingPolygon polygon) {
+  void _showBuildingInfoPopup(BuildingPolygon polygon) async {
+    // Check for existing customers first
+    try {
+      final result = await _apiService.getBuildingCustomers(polygon.buildingId);
+
+      if (result['success'] == true && result['existingCustomers'] != null) {
+        final existingCustomers = result['existingCustomers'] as List;
+        final customerCount = existingCustomers.length;
+
+        if (customerCount > 0 && mounted) {
+          final shouldContinue = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade700,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.warning,
+                        color: Colors.white, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'ADD NEW CUSTOMER',
+                      style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange),
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border:
+                            Border.all(color: Colors.orange.shade300, width: 2),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Icon(Icons.info_outline,
+                                color: Colors.orange.shade700, size: 20),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                                child: Text('WARNING: Existing Customers',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14))),
+                          ]),
+                          const SizedBox(height: 8),
+                          Text(
+                              'This building already has $customerCount registered customer(s):',
+                              style: TextStyle(
+                                  fontSize: 13, color: Colors.grey.shade700)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ...existingCustomers.map((customer) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: customer['label']
+                                          .toString()
+                                          .startsWith('R')
+                                      ? Colors.blue.shade700
+                                      : Colors.orange.shade700,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(customer['label'] as String,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13)),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(customer['name'] as String,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13)),
+                                    Text(customer['email'] as String,
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey.shade600)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.help_outline,
+                              color: Colors.red.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Are you sure you want to create a NEW customer account for this building?',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade700),
+                  child: const Text('Yes, Add New Customer',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+
+          if (shouldContinue != true) return;
+        }
+      }
+    } catch (e) {
+      // Continue anyway if check fails
+    }
+
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => BuildingInfoPopup(
@@ -675,170 +867,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     );
   }
 
-  void _showBuildingInfoPopup(BuildingPolygon polygon) async {
-    try {
-      final result = await _apiService.checkBuilding(polygon.buildingId);
-
-      if (result['success'] == true && result['hasCustomers'] == true) {
-        final existingCustomers = result['existingCustomers'] as List;
-        final customerCount = result['customerCount'] as int;
-
-        final shouldContinue = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade700,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child:
-                      const Icon(Icons.warning, color: Colors.white, size: 24),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    'ADD NEW CUSTOMER',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange),
-                  ),
-                ),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border:
-                          Border.all(color: Colors.orange.shade300, width: 2),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Icon(Icons.info_outline,
-                              color: Colors.orange.shade700, size: 20),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                              child: Text('WARNING: Existing Customers',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14))),
-                        ]),
-                        const SizedBox(height: 8),
-                        Text(
-                            'This building already has $customerCount registered customer(s):',
-                            style: TextStyle(
-                                fontSize: 13, color: Colors.grey.shade700)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ...existingCustomers.map((customer) => Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: customer['label']
-                                        .toString()
-                                        .startsWith('R')
-                                    ? Colors.blue.shade700
-                                    : Colors.orange.shade700,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(customer['label'] as String,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13)),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(customer['name'] as String,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13)),
-                                  Text(customer['email'] as String,
-                                      style: TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey.shade600)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      )),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade300),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.help_outline,
-                            color: Colors.red.shade700, size: 20),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'Are you sure you want to create a NEW customer account for this building?',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange.shade700),
-                child: const Text('Yes, Add New Customer',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        );
-
-        if (shouldContinue != true) return;
-      }
-    } catch (e) {
-      // Continue anyway if check fails
-    }
-
+  void _selectPolygonDirectly(BuildingPolygon polygon) {
     showDialog(
       context: context,
       builder: (context) => BuildingInfoPopup(
@@ -941,7 +970,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     onMapReady: () {
                       _mapReady = true;
                       // If GPS was obtained before the map was ready, move now
-                      // Zoom 16 covers ~800m × 800m — enough to see nearby buildings
                       final center = _pendingCenter ?? _currentLocation;
                       if (center != null) {
                         _mapController.move(center, 16.0);
@@ -966,14 +994,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       userAgentPackageName: 'com.mottainai.survey',
                       maxZoom: 19,
                     ),
-                    // Building polygon fills (pre-built, not rebuilt on every frame)
-                    // simplificationTolerance=0 disables simplification for small building polygons
-                    PolygonLayer(
-                      polygons: _polygonOverlays,
-                      simplificationTolerance: 0,
+                    // Building polygon fills with flutter_map v7 hit detection
+                    // GestureDetector wraps the layer to intercept taps on polygons
+                    GestureDetector(
+                      behavior: HitTestBehavior.deferToChild,
+                      onTap: _onPolygonTap,
+                      child: PolygonLayer(
+                        polygons: _polygonOverlays,
+                        hitNotifier: _polygonHitNotifier,
+                        simplificationTolerance: 0,
+                      ),
                     ),
-                    // Building ID labels (pre-built)
-                    MarkerLayer(markers: _polygonLabels),
+                    // Building ID labels + captured business name labels
+                    MarkerLayer(markers: _capturedLabels),
                     // Selected location pin
                     if (_selectedLocation != null && _selectedPolygon == null)
                       MarkerLayer(

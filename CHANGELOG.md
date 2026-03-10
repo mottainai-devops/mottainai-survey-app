@@ -2,6 +2,22 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.17] - 2026-03-10
+
+### Fixed
+- **Polygon tap popup not working (CRITICAL)**: Tapping a polygon now correctly opens the building info popup
+  - Root cause: `MarkerLayer` labels sat on top of `PolygonLayer` and consumed all tap events before `_onMapTap` could fire
+  - Fix: migrated to flutter_map v7 native hit detection — `PolygonLayer(hitNotifier: ...)` + `Polygon(hitValue: buildingId)` + `GestureDetector(onTap: _onPolygonTap)` wrapping the layer
+  - Building ID labels now use `IgnorePointer` so they don't block polygon taps
+- **Labels showing for all buildings**: Labels (business name tags) now only appear for captured buildings
+  - Uncaptured polygons show only the building ID as tiny text on the polygon itself
+  - Captured buildings show a green business-name badge above the polygon
+- **Sync radius one-sided appearance**: Polygons were visually clustered to one side
+  - The ArcGIS query already uses a circular buffer; the issue was the bounding box cache query being too tight
+  - Both now use the same `_radiusKm = 1.0` constant to ensure consistency
+
+---
+
 ## [3.2.11] - 2026-03-10
 
 ### Fixed
