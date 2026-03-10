@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/pickup_submission.dart';
@@ -20,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -87,6 +88,15 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 10) {
+      // Clear cached polygons - v3.2.10 fixes:
+      // 1. Longitude delta formula (cos(lat) instead of lat/90)
+      // 2. Radius increased from 500m to 1km
+      // Old cache may have polygons from wrong area due to broken bounding box query
+      await db.execute('DELETE FROM cached_polygons');
+      print('Cleared polygon cache: fixing bounding box formula and radius (v3.2.10)');
+    }
+
     if (oldVersion < 9) {
       // Clear cached polygons - v3.2.8 fixes coordinate projection (outSR=4326)
       // Old cache has wrong coordinates (local Nigerian projection, ~80km off)
@@ -273,13 +283,15 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 5.0,
+    double radiusKm = 1.0,
   }) async {
     final db = await instance.database;
     
-    // Approximate degrees for radius (1 degree ≈ 111km)
+    // Approximate degrees for radius (1 degree ≈ 111km at equator)
+    // Latitude delta is constant; longitude delta shrinks toward the poles via cos(lat)
     final latDelta = radiusKm / 111.0;
-    final lonDelta = radiusKm / (111.0 * (lat.abs() > 0 ? lat.abs() / 90 : 1));
+    final cosLat = math.cos(lat * math.pi / 180.0);
+    final lonDelta = radiusKm / (111.0 * (cosLat > 0.001 ? cosLat : 0.001));
     
     final minLat = lat - latDelta;
     final maxLat = lat + latDelta;

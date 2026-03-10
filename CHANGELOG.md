@@ -2,6 +2,22 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.10] - 2026-03-10
+
+### Fixed
+- **Map not centering on GPS location**: Map camera now reliably centers on GPS location when the pickup form opens
+  - Root cause: `addPostFrameCallback` fired before FlutterMap was fully mounted, so `mapController.move()` was ignored
+  - Fix: replaced with `Future.delayed(300ms)` to ensure the map widget is ready before moving
+  - Added a second re-center call after polygons finish loading
+- **Longitude bounding box formula incorrect**: Cache query was returning buildings from a 13× wider area than intended
+  - Root cause: formula used `lat/90` instead of `cos(lat)` for longitude delta — at Lagos (6.58°) this gave ±6.9km instead of ±0.5km
+  - Fix: corrected to `radiusKm / (111.0 * cos(lat))` using `dart:math`
+- **Search radius increased from 500m to 1km**: 500m was too tight; buildings at the edge of the user's block were excluded
+- **Database upgraded to v10**: old polygon cache cleared on first launch to force re-sync with correct parameters
+- **ArcGIS safety cap increased from 500 to 1000 buildings** for 1km radius coverage
+
+---
+
 ## [3.2.9] - 2026-03-10
 
 ### Fixed

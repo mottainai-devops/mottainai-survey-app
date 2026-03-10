@@ -32,7 +32,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   final ApiService _apiService = ApiService();
 
   // Use the same radius everywhere so cache queries match what was synced
-  static const double _radiusKm = 0.5;
+  // 1km gives a comfortable coverage area without overwhelming the connection
+  static const double _radiusKm = 1.0;
 
   LatLng? _selectedLocation;
   LatLng? _currentLocation;
@@ -96,14 +97,22 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         }
       });
 
-      // Move map to current location after first frame
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Move map to GPS location — use a small delay so the FlutterMap
+      // widget has finished its first layout before we call move().
+      Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted && _selectedLocation != null) {
           _mapController.move(_selectedLocation!, 18.5);
         }
       });
 
       await _loadPolygonsForCurrentLocation();
+
+      // Re-center after polygons load in case the map drifted
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && _currentLocation != null) {
+          _mapController.move(_currentLocation!, 18.5);
+        }
+      });
     } catch (e) {
       setState(() {
         _error = 'Failed to get location: $e';

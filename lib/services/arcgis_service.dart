@@ -18,7 +18,7 @@ class ArcGISService {
   ///
   /// [lat] and [lon] are the center coordinates (WGS84).
   /// [radiusKm] is the search radius in kilometers.
-  ///   Default is 0.5km (500m) — the dataset has 1.5M features so a large
+  ///   Default is 1.0km — the dataset has 1.5M features so a large
   ///   radius returns thousands of polygons and causes connection aborts on
   ///   mobile networks. Increase only when on a fast connection.
   ///
@@ -26,7 +26,7 @@ class ArcGISService {
   Future<List<BuildingPolygon>> fetchPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 0.5,
+    double radiusKm = 1.0,
   }) async {
     final radiusMeters = (radiusKm * 1000).round();
     final geometryJson =
@@ -96,9 +96,9 @@ class ArcGISService {
           hasMore = false;
         }
 
-        // Safety cap: stop after 500 buildings to avoid memory issues
-        if (allPolygons.length >= 500) {
-          print('[ArcGIS] Reached 500-building safety cap, stopping pagination');
+        // Safety cap: stop after 1000 buildings to avoid memory issues
+        if (allPolygons.length >= 1000) {
+          print('[ArcGIS] Reached 1000-building safety cap, stopping pagination');
           hasMore = false;
         }
       } catch (e) {
