@@ -109,14 +109,15 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         _pendingCenter = _currentLocation;
       });
       if (_mapReady && _currentLocation != null) {
-        _mapController.move(_currentLocation!, 18.5);
+        // Zoom 16 covers ~800m × 800m — enough to see nearby buildings
+        _mapController.move(_currentLocation!, 16.0);
       }
 
       await _loadPolygonsForCurrentLocation();
 
       // Re-center after polygons load in case the map drifted
       if (_mapReady && _currentLocation != null) {
-        _mapController.move(_currentLocation!, 18.5);
+        _mapController.move(_currentLocation!, 16.0);
       } else {
         setState(() {
           _pendingCenter = _currentLocation;
@@ -912,14 +913,15 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   options: MapOptions(
                     initialCenter:
                         _selectedLocation ?? const LatLng(6.5795, 3.3549),
-                    initialZoom: 18.5,
+                    initialZoom: 16.0,
                     onTap: _onMapTap,
                     onMapReady: () {
                       _mapReady = true;
                       // If GPS was obtained before the map was ready, move now
+                      // Zoom 16 covers ~800m × 800m — enough to see nearby buildings
                       final center = _pendingCenter ?? _currentLocation;
                       if (center != null) {
-                        _mapController.move(center, 18.5);
+                        _mapController.move(center, 16.0);
                         setState(() {
                           _pendingCenter = null;
                         });
