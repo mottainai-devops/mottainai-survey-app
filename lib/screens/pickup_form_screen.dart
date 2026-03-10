@@ -24,7 +24,13 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
   final _buildingIdController = TextEditingController();
   final _binQuantityController = TextEditingController();
   final _incidentReportController = TextEditingController();
-  
+
+  // Customer contact fields (v3.2.5)
+  final _customerNameController = TextEditingController();
+  final _customerPhoneController = TextEditingController();
+  final _customerEmailController = TextEditingController();
+  final _customerAddressController = TextEditingController();
+
   String _customerType = 'Residential';
   String _binType = '10 CBM SKIP BIN';
   String? _wheelieBinType;
@@ -52,6 +58,10 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
     _buildingIdController.dispose();
     _binQuantityController.dispose();
     _incidentReportController.dispose();
+    _customerNameController.dispose();
+    _customerPhoneController.dispose();
+    _customerEmailController.dispose();
+    _customerAddressController.dispose();
     super.dispose();
   }
 
@@ -67,7 +77,8 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
       if (image != null) {
         // Save to app directory
         final appDir = await getApplicationDocumentsDirectory();
-        final fileName = '${DateTime.now().millisecondsSinceEpoch}_${path.basename(image.path)}';
+        final fileName =
+            '${DateTime.now().millisecondsSinceEpoch}_${path.basename(image.path)}';
         final savedImage = File('${appDir.path}/$fileName');
         await File(image.path).copy(savedImage.path);
 
@@ -145,8 +156,12 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
       final syncProvider = Provider.of<SyncProvider>(context, listen: false);
 
       final pickup = PickupSubmission(
-        formId: 'default_form_id', // You can make this dynamic if needed
+        formId: 'pickup_form',
         supervisorId: _supervisorIdController.text.trim(),
+        customerName: _customerNameController.text.trim(),
+        customerPhone: _customerPhoneController.text.trim(),
+        customerEmail: _customerEmailController.text.trim(),
+        customerAddress: _customerAddressController.text.trim(),
         customerType: _customerType,
         binType: _binType,
         wheelieBinType: _wheelieBinType,
@@ -162,6 +177,8 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
         latitude: _latitude,
         longitude: _longitude,
         createdAt: DateTime.now().toIso8601String(),
+        companyId: authProvider.user!.companyId,
+        companyName: authProvider.user!.companyName,
       );
 
       // Save to local database
@@ -174,7 +191,7 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Pickup saved! Will sync when online.'),
+            content: Text('Pickup saved! Syncing now...'),
             backgroundColor: Colors.green,
           ),
         );
@@ -210,6 +227,88 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // ── Customer Contact Section ──────────────────────────────
+            _sectionHeader('Customer Details', Icons.person_outline),
+            const SizedBox(height: 12),
+
+            // Customer Name
+            TextFormField(
+              controller: _customerNameController,
+              decoration: InputDecoration(
+                labelText: 'Customer Name *',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                prefixIcon: const Icon(Icons.person),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Please enter customer name';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Customer Phone
+            TextFormField(
+              controller: _customerPhoneController,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                labelText: 'Customer Phone *',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                prefixIcon: const Icon(Icons.phone),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Please enter customer phone number';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Customer Email
+            TextFormField(
+              controller: _customerEmailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: InputDecoration(
+                labelText: 'Customer Email (Optional)',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                prefixIcon: const Icon(Icons.email_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Customer Address
+            TextFormField(
+              controller: _customerAddressController,
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: 'Customer Address *',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                prefixIcon: const Icon(Icons.home_outlined),
+                alignLabelWithHint: true,
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Please enter customer address';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 24),
+
+            // ── Pickup Details Section ────────────────────────────────
+            _sectionHeader('Pickup Details', Icons.delete_outline),
+            const SizedBox(height: 12),
+
             // Supervisor ID
             TextFormField(
               controller: _supervisorIdController,
@@ -256,7 +355,7 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                prefixIcon: const Icon(Icons.person),
+                prefixIcon: const Icon(Icons.category_outlined),
               ),
               items: _customerTypes.map((type) {
                 return DropdownMenuItem(
@@ -291,12 +390,16 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
               onChanged: (value) {
                 setState(() {
                   _binType = value!;
+                  // Reset wheelie bin type when bin type changes
+                  if (!value.contains('WHEELIE')) {
+                    _wheelieBinType = null;
+                  }
                 });
               },
             ),
             const SizedBox(height: 16),
 
-            // Wheelie Bin Type (optional)
+            // Wheelie Bin Type (only shown when a wheelie bin is selected)
             if (_binType.contains('WHEELIE'))
               Column(
                 children: [
@@ -364,23 +467,14 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
-            // Location Map
-            const Text(
-              'Current Location *',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            // ── Location Section ──────────────────────────────────────
+            _sectionHeader('Pickup Location', Icons.location_on_outlined),
             const SizedBox(height: 8),
             const Text(
-              'Please click on the current location icon (radio button)',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey,
-              ),
+              'Tap the location icon on the map to set the pickup point',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
             const SizedBox(height: 8),
             LocationMapPicker(
@@ -393,7 +487,11 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
               initialLat: _latitude,
               initialLon: _longitude,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
+
+            // ── Photos Section ────────────────────────────────────────
+            _sectionHeader('Photos', Icons.camera_alt_outlined),
+            const SizedBox(height: 12),
 
             // First Photo
             _buildPhotoSection(
@@ -409,8 +507,9 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
               photo: _secondPhoto,
               onTap: () => _pickImage(false),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
+            // ── Notes Section ─────────────────────────────────────────
             // Incident Report
             TextFormField(
               controller: _incidentReportController,
@@ -420,7 +519,7 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                prefixIcon: const Icon(Icons.report),
+                prefixIcon: const Icon(Icons.report_outlined),
                 alignLabelWithHint: true,
               ),
             ),
@@ -468,16 +567,37 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Your pickup will be saved locally and synced when you have internet connection.',
+                      'Your pickup will be saved locally and synced automatically when you have internet connection.',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _sectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey.shade700),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade700,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Divider(color: Colors.grey.shade300)),
+      ],
     );
   }
 
@@ -492,7 +612,7 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
         Text(
           title,
           style: const TextStyle(
-            fontSize: 16,
+            fontSize: 14,
             fontWeight: FontWeight.w500,
           ),
         ),

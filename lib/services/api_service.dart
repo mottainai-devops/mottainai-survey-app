@@ -113,11 +113,13 @@ class ApiService {
         request.headers['Authorization'] = _token!;
       }
 
-      // Add all form fields according to backend API contract
-      request.fields['customerName'] = pickup.formId; // Using formId as customerName for now
-      request.fields['customerPhone'] = ''; // TODO: Add to form
-      request.fields['customerEmail'] = ''; // TODO: Add to form  
-      request.fields['customerAddress'] = ''; // TODO: Add to form
+      // Customer contact fields (fixed in v3.2.5 — previously sent as empty strings)
+      request.fields['customerName'] = pickup.customerName;
+      request.fields['customerPhone'] = pickup.customerPhone;
+      request.fields['customerEmail'] = pickup.customerEmail;
+      request.fields['customerAddress'] = pickup.customerAddress;
+
+      // Pickup fields
       request.fields['customerType'] = pickup.customerType;
       if (pickup.socioClass != null) {
         request.fields['socioClass'] = pickup.socioClass!;
@@ -129,7 +131,7 @@ class ApiService {
       request.fields['binQuantity'] = pickup.binQuantity.toString();
       request.fields['buildingId'] = pickup.buildingId;
       request.fields['pickUpDate'] = pickup.pickUpDate;
-      if (pickup.incidentReport != null) {
+      if (pickup.incidentReport != null && pickup.incidentReport!.isNotEmpty) {
         request.fields['incidentReport'] = pickup.incidentReport!;
       }
       request.fields['userId'] = pickup.userId;
@@ -188,8 +190,8 @@ class ApiService {
             userFriendlyError = errorData['message'] ?? errorData['error'] ?? 'Unknown error';
           } catch (e) {
             // If not JSON, show the raw message (truncated)
-            final truncated = response.body.length > 100 
-                ? '${response.body.substring(0, 100)}...' 
+            final truncated = response.body.length > 200 
+                ? '${response.body.substring(0, 200)}...' 
                 : response.body;
             userFriendlyError = truncated;
           }

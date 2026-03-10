@@ -20,7 +20,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -37,6 +37,10 @@ class DatabaseHelper {
       id $idType,
       formId $textType,
       supervisorId $textType,
+      customerName $textNullable,
+      customerPhone $textNullable,
+      customerEmail $textNullable,
+      customerAddress $textNullable,
       customerType $textType,
       binType $textType,
       wheelieBinType $textNullable,
@@ -83,6 +87,19 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 8) {
+      // Add customer contact columns to pickups table (v3.2.5)
+      const textNullable = 'TEXT';
+      for (final col in ['customerName', 'customerPhone', 'customerEmail', 'customerAddress']) {
+        try {
+          await db.execute('ALTER TABLE pickups ADD COLUMN $col $textNullable');
+          print('Successfully added $col column to pickups table');
+        } catch (e) {
+          print('Error adding $col column (may already exist): $e');
+        }
+      }
+    }
+
     if (oldVersion < 7) {
       // Add socioClass column to pickups table
       const textNullable = 'TEXT';

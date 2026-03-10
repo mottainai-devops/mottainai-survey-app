@@ -2,7 +2,7 @@
 
 # Integration State & API Contract
 
-**Last Updated**: November 24, 2025
+**Last Updated**: March 10, 2026
 
 ---
 
@@ -10,9 +10,9 @@
 
 | Component | Version | Last Updated | Key Details |
 | :--- | :--- | :--- | :--- |
-| 📱 **Mobile App** | `v3.2.3` | Nov 26, 2025 | APK: `mottainai-survey-app-v3.2.3.apk` |
+| 📱 **Mobile App** | `v3.2.5` | Mar 10, 2026 | APK: `mottainai-survey-app-v3.2.5-fat.apk` |
 | ☁️ **Backend** | `v2.2.0` | Nov 25, 2025 | API URL: `https://upwork.kowope.xyz` |
-| 🗃️ **Database** | `v6` (SQLite) | Nov 24, 2025 | `customerLabels` column added to `cached_polygons` |
+| 🗃️ **Database** | `v8` (SQLite) | Mar 10, 2026 | `customerName`, `customerPhone`, `customerEmail`, `customerAddress` columns added to `pickups` |
 
 ---
 
@@ -40,10 +40,10 @@ The mobile app sends a JSON object with the following structure and data types:
   "binQuantity": "int",
   "buildingId": "string",
   "pickUpDate": "string",
-  "firstPhoto": "string",
-  "secondPhoto": "string",
+  "firstPhoto": "file (multipart)",
+  "secondPhoto": "file (multipart)",
   "incidentReport": "string?",
-  "userId": "int",
+  "userId": "string",
   "latitude": "double",
   "longitude": "double",
   "createdAt": "string",
@@ -53,46 +53,38 @@ The mobile app sends a JSON object with the following structure and data types:
 ```
 
 **Key Field Details**:
-- `pickUpDate` is sent in the format: `'MMM dd, yyyy'` (e.g., "Nov 24, 2025").
+- `pickUpDate` is sent in the format: `'MMM dd, yyyy'` (e.g., "Mar 10, 2026").
 - `createdAt` is sent in ISO 8601 format.
 - `socioClass` is required for residential customers (values: "low", "medium", "high").
 - `wheelieBinType`, `incidentReport`, `companyId`, `companyName`, and `socioClass` (for commercial) are optional and may be `null`.
 - Photos are sent as multipart/form-data files, not as paths.
 - Backend calculates pricing automatically - mobile app does NOT send price/amount.
+- `customerName`, `customerPhone`, `customerAddress` are required fields in the form.
+- `customerEmail` is optional.
 
 #### Backend Response (What the app expects)
 
-- **On Success**: The mobile app expects a `200 OK` or `201 Created` status code with a simple JSON response confirming success, e.g., `{"status": "success", "message": "Pickup recorded"}`.
-- **On Failure**: The app expects a non-2xx status code with a JSON response containing an error message, e.g., `{"status": "error", "message": "Invalid data provided"}`.
+- **On Success**: `200 OK` or `201 Created` with `{"status": "success", "message": "Form submitted successfully", "form": {...}}`.
+- **On Failure**: Non-2xx status code with `{"status": "error", "message": "..."}` or `{"error": "..."}`.
 
 ---
 
 ## 3. Known Integration Issues & Pending Changes
 
-This section tracks active issues and planned changes that may impact either system.
-
 ### Current Issues
 
-**✅ All backend issues resolved as of Nov 25, 2025!**
+**✅ All known issues resolved as of v3.2.5 (Mar 10, 2026)**
 
-1.  ✅ **Zoho Sync** - Working with auto-refresh
-2.  ✅ **S3 Photo Storage** - Configured (AWS eu-west-1, bucket: mottainai-photos)
-3.  ✅ **Price Calculation** - Server-side with all 9 pricing tiers
-4.  ✅ **Pickup Details API** - `GET /api/pickups/:id` endpoint available
+1. ✅ **Customer contact fields** - `customerName`, `customerPhone`, `customerEmail`, `customerAddress` now collected in form and sent to backend
+2. ✅ **Backend submission failure** - Root cause was `customerName` being sent as `"default_form_id"` placeholder. Fixed in v3.2.5.
+3. ✅ **Zoho Sync** - Working with auto-refresh
+4. ✅ **S3 Photo Storage** - Configured (AWS eu-west-1, bucket: mottainai-photos)
+5. ✅ **Price Calculation** - Server-side with all 9 pricing tiers
+6. ✅ **Pickup Details API** - `GET /api/pickups/:id` endpoint available
 
 ### Pending Changes
 
-- **📱 Mobile App**: Need to add customer contact fields (customerName, customerPhone, customerEmail, customerAddress) to the pickup form.
-- **☁️ Backend**: 🔴 **CRITICAL** - Pickup submissions are failing to sync. Backend is rejecting all submissions with unknown error. Backend logs need to be checked.
-
-### Recently Fixed
-
-- **✅ Database Schema** (v3.2.3): Added socioClass column to local database, fixed blocking bug preventing ALL submissions
-- **✅ Error Handling** (v3.2.2): Mobile app now handles backend HTML errors gracefully
-- **✅ Tap Detection** (v3.2.1): Fixed polygon vs label tap detection (deferToChild behavior)
-- **✅ Label/Polygon Distinction** (v3.2.0): GREEN labels for existing customers, BLUE for empty buildings
-- **✅ Socio-Class Auto-Fill** (v3.2.0): Automatically populates from ArcGIS feature layer
-- **✅ companyId in Submissions** (v3.1.1): Mobile app sends user's companyId
+None at this time.
 
 ---
 
@@ -100,6 +92,8 @@ This section tracks active issues and planned changes that may impact either sys
 
 | Date | System | Agent | Change Description |
 | :--- | :--- | :--- | :--- |
+| Mar 10, 2026 | Mobile | Manus | **v3.2.5 Release**: Added customer contact fields (name, phone, email, address) to pickup form; fixed backend submission failure caused by `customerName` being sent as `"default_form_id"` placeholder; bumped SQLite DB to v8 with migration for new columns |
+| Nov 26, 2025 | Mobile | Manus | **v3.2.4 Release**: Fixed sync status display bug in history screen |
 | Nov 26, 2025 | Mobile | Manus | **v3.2.3 Release**: CRITICAL FIX - Added socioClass column to database, fixed blocking bug |
 | Nov 26, 2025 | Mobile | Manus | **v3.2.2 Release**: Improved error handling for backend HTML errors |
 | Nov 26, 2025 | Mobile | Manus | **v3.2.1 Release**: Fixed tap detection (deferToChild behavior) |

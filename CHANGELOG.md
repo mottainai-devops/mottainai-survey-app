@@ -2,6 +2,28 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.5] - 2026-03-10
+
+### Added
+- **Customer Contact Fields**: Added `customerName`, `customerPhone`, `customerEmail`, and `customerAddress` fields to the pickup form
+  - `customerName`, `customerPhone`, and `customerAddress` are required fields
+  - `customerEmail` is optional
+  - Fields are now properly sent to the backend in the multipart form submission
+  - SQLite database upgraded to v8 with migration to add new columns
+
+### Fixed
+- **Backend Submission Failure (CRITICAL)**: Fixed root cause of all pickup submissions failing to sync
+  - `customerName` was being sent as the hardcoded string `"default_form_id"` instead of the actual customer name
+  - Backend was rejecting submissions with this invalid value
+  - Now sends the actual customer name entered in the form
+  - Verified working: backend returns `{"status":"success"}` with correct customer data
+
+### Changed
+- Pickup form reorganized into sections: Customer Details, Pickup Details, Location, Photos, Notes
+- Section headers added for improved readability
+
+---
+
 ## [3.2.4] - 2025-12-02
 
 ### Fixed
@@ -84,6 +106,7 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 
 ## Version History
 
+- **v3.2.5** (Mar 10, 2026) - Customer contact fields + backend submission fix
 - **v3.2.4** (Dec 2, 2025) - Sync status display fix
 - **v3.2.3** (Nov 28, 2025) - Offline support and auto-sync
 - **v3.2.0** (Nov 26, 2025) - Company selection and PIN auth

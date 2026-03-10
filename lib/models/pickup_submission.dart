@@ -2,6 +2,11 @@ class PickupSubmission {
   final int? id;
   final String formId;
   final String supervisorId;
+  // Customer contact fields (added v3.2.5)
+  final String customerName;
+  final String customerPhone;
+  final String customerEmail;
+  final String customerAddress;
   final String customerType;
   final String binType;
   final String? wheelieBinType;
@@ -26,6 +31,10 @@ class PickupSubmission {
     this.id,
     required this.formId,
     required this.supervisorId,
+    this.customerName = '',
+    this.customerPhone = '',
+    this.customerEmail = '',
+    this.customerAddress = '',
     required this.customerType,
     required this.binType,
     this.wheelieBinType,
@@ -52,6 +61,10 @@ class PickupSubmission {
       'id': id,
       'formId': formId,
       'supervisorId': supervisorId,
+      'customerName': customerName,
+      'customerPhone': customerPhone,
+      'customerEmail': customerEmail,
+      'customerAddress': customerAddress,
       'customerType': customerType,
       'binType': binType,
       'wheelieBinType': wheelieBinType,
@@ -78,6 +91,10 @@ class PickupSubmission {
     return {
       'formId': formId,
       'supervisorId': supervisorId,
+      'customerName': customerName,
+      'customerPhone': customerPhone,
+      'customerEmail': customerEmail,
+      'customerAddress': customerAddress,
       'customerType': customerType,
       'binType': binType,
       'wheelieBinType': wheelieBinType,
@@ -103,6 +120,10 @@ class PickupSubmission {
       id: map['id'] as int?,
       formId: map['formId'] as String,
       supervisorId: map['supervisorId'] as String,
+      customerName: map['customerName'] as String? ?? '',
+      customerPhone: map['customerPhone'] as String? ?? '',
+      customerEmail: map['customerEmail'] as String? ?? '',
+      customerAddress: map['customerAddress'] as String? ?? '',
       customerType: map['customerType'] as String,
       binType: map['binType'] as String,
       wheelieBinType: map['wheelieBinType'] as String?,
@@ -129,6 +150,10 @@ class PickupSubmission {
     int? id,
     String? formId,
     String? supervisorId,
+    String? customerName,
+    String? customerPhone,
+    String? customerEmail,
+    String? customerAddress,
     String? customerType,
     String? binType,
     String? wheelieBinType,
@@ -153,6 +178,10 @@ class PickupSubmission {
       id: id ?? this.id,
       formId: formId ?? this.formId,
       supervisorId: supervisorId ?? this.supervisorId,
+      customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
+      customerEmail: customerEmail ?? this.customerEmail,
+      customerAddress: customerAddress ?? this.customerAddress,
       customerType: customerType ?? this.customerType,
       binType: binType ?? this.binType,
       wheelieBinType: wheelieBinType ?? this.wheelieBinType,
