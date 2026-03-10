@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart' as loc;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/building_polygon.dart';
 import '../services/polygon_cache_service.dart';
 import '../services/api_service.dart';
@@ -145,6 +147,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
+  /// Returns distance in metres between two lat/lon points (Haversine formula).
+  double _distanceMetres(double lat1, double lon1, double lat2, double lon2) {
+    const R = 6371000.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLon = (lon2 - lon1) * math.pi / 180;
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
   Future<void> _loadPolygonsForCurrentLocation() async {
     if (_currentLocation == null) return;
 
@@ -154,11 +169,23 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastSyncLat = prefs.getDouble('last_sync_lat');
+      final lastSyncLon = prefs.getDouble('last_sync_lon');
+      final curLat = _currentLocation!.latitude;
+      final curLon = _currentLocation!.longitude;
+
+      // Check if GPS has moved more than 300m from the last sync centre.
+      // If so, force a fresh ArcGIS sync so polygons are centred on the user.
+      final movedFarEnough = lastSyncLat == null ||
+          lastSyncLon == null ||
+          _distanceMetres(curLat, curLon, lastSyncLat, lastSyncLon) > 300;
+
       // Use the same radius as the sync so we only query what was actually cached
       final cachedPolygons =
           await _polygonService.getCachedPolygonsNearLocation(
-        lat: _currentLocation!.latitude,
-        lon: _currentLocation!.longitude,
+        lat: curLat,
+        lon: curLon,
         radiusKm: _radiusKm,
       );
 
@@ -173,25 +200,34 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       // Rebuild overlays after updating polygons
       _rebuildOverlays();
 
-      print('Loaded ${cachedPolygons.length} cached polygons near current location');
+      print('[MAP] Loaded ${cachedPolygons.length} cached polygons near current location');
+      print('[MAP] GPS: ($curLat, $curLon), lastSync: ($lastSyncLat, $lastSyncLon), movedFarEnough: $movedFarEnough');
       if (cachedPolygons.isNotEmpty) {
         print(
-            'First polygon: ${cachedPolygons[0].buildingId} at (${cachedPolygons[0].centerLat}, ${cachedPolygons[0].centerLon})');
+            '[MAP] First polygon: ${cachedPolygons[0].buildingId} at (${cachedPolygons[0].centerLat}, ${cachedPolygons[0].centerLon})');
       }
 
       // Fetch customer names for captured buildings (nearest 30)
       _fetchCustomerNamesForPolygons(cachedPolygons.take(30).toList());
 
-      // Sync from ArcGIS if cache is empty or stale
-      if (cachedPolygons.isEmpty || await _polygonService.needsRefresh()) {
+      // Sync from ArcGIS if:
+      //  - cache is empty
+      //  - cache is stale (> 7 days)
+      //  - GPS has moved more than 300m from last sync centre
+      if (cachedPolygons.isEmpty ||
+          await _polygonService.needsRefresh() ||
+          movedFarEnough) {
         await _syncPolygons();
+        // Save the new sync centre
+        await prefs.setDouble('last_sync_lat', curLat);
+        await prefs.setDouble('last_sync_lon', curLon);
       } else {
         setState(() {
           _isLoadingPolygons = false;
         });
       }
     } catch (e) {
-      print('Error loading polygons: $e');
+      print('[MAP] Error loading polygons: $e');
       setState(() {
         _isLoadingPolygons = false;
       });
@@ -240,6 +276,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         });
 
         _rebuildOverlays();
+
+        // Persist the sync centre so future opens don't re-sync unnecessarily
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setDouble('last_sync_lat', _currentLocation!.latitude);
+        await prefs.setDouble('last_sync_lon', _currentLocation!.longitude);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

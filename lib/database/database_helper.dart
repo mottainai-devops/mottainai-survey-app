@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -88,6 +88,14 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 11) {
+      // Clear cached polygons - v3.2.18:
+      // Force re-sync centred on current GPS location.
+      // Old cache may have polygons from a different location (previous session).
+      await db.execute('DELETE FROM cached_polygons');
+      print('Cleared polygon cache: forcing re-sync at current GPS location (v3.2.18)');
+    }
+
     if (oldVersion < 10) {
       // Clear cached polygons - v3.2.10 fixes:
       // 1. Longitude delta formula (cos(lat) instead of lat/90)
