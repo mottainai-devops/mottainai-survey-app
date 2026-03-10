@@ -2,6 +2,19 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.7] - 2026-03-10
+
+### Fixed
+- **ArcGIS Connection Abort on Mobile (CRITICAL)**: Fixed "Software caused connection abort" error
+  - Root cause: the ArcGIS dataset has 1.5 million features; a 5km radius query returns thousands of polygon geometries in one response, which mobile connections cannot sustain
+  - **Default radius reduced from 5km to 500m** — enough to cover the immediate work area
+  - **Paginated fetching**: results are now fetched in pages of 100 records using `resultRecordCount` + `resultOffset`
+  - **30-second timeout** added to all ArcGIS HTTP requests
+  - **Safety cap** of 500 buildings prevents memory issues on low-end devices
+  - Partial results are preserved if a page fails mid-pagination
+
+---
+
 ## [3.2.6] - 2026-03-10
 
 ### Fixed
