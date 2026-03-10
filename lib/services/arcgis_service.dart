@@ -66,17 +66,26 @@ class ArcGISService {
           // Service is public - no token required
         };
 
-        final uri =
-            Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);
+        // ✅ Use POST with form-encoded body to avoid long-URL truncation
+        //    (GET URLs exceed ~600 chars and are silently dropped in the field).
+        final uri = Uri.parse('$_baseUrl/query');
 
         print(
-            '[ArcGIS] Fetching page offset=$offset, pageSize=$_pageSize ...');
+            '[ArcGIS] Fetching page offset=$offset, pageSize=$_pageSize (POST)...');
 
         http.Response? response;
         int attempt = 0;
         while (attempt < _maxRetries) {
           try {
-            response = await http.get(uri).timeout(_timeout);
+            response = await http
+                .post(
+                  uri,
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                  },
+                  body: queryParams,
+                )
+                .timeout(_timeout);
             break; // success
           } catch (retryErr) {
             attempt++;
