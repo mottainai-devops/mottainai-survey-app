@@ -50,6 +50,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   List<Polygon> _polygonOverlays = [];
   List<Marker> _polygonLabels = [];
 
+  // Sync progress text shown during loading
+  String _syncProgressText = 'Loading buildings...';
+
   // Track whether the FlutterMap controller is ready to accept move() calls
   bool _mapReady = false;
   LatLng? _pendingCenter;
@@ -135,6 +138,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
     setState(() {
       _isLoadingPolygons = true;
+      _syncProgressText = 'Loading buildings...';
     });
 
     try {
@@ -190,10 +194,21 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
 
     try {
+      setState(() {
+        _syncProgressText = 'Syncing buildings...';
+      });
+
       final result = await _polygonService.syncPolygonsForLocation(
         lat: _currentLocation!.latitude,
         lon: _currentLocation!.longitude,
         radiusKm: _radiusKm,
+        onProgress: (fetched) {
+          if (mounted) {
+            setState(() {
+              _syncProgressText = 'Syncing buildings... ($fetched fetched)';
+            });
+          }
+        },
       );
 
       if (result.success) {
@@ -1008,17 +1023,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                         color: Colors.white.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 16,
                             height: 16,
                             child:
                                 CircularProgressIndicator(strokeWidth: 2),
                           ),
-                          SizedBox(width: 8),
-                          Text('Loading buildings...'),
+                          const SizedBox(width: 8),
+                          Text(_syncProgressText),
                         ],
                       ),
                     ),

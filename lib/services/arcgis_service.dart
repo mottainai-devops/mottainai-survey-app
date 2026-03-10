@@ -9,10 +9,15 @@ class ArcGISService {
       'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services/New_Footprints_gdb_b1422/FeatureServer/0';
 
   // The service has 1.5M features total. Use small pages to avoid connection abort on mobile.
-  static const int _pageSize = 100;
+  // Reduced from 100 to 50 to make each request smaller and faster on slow mobile connections.
+  static const int _pageSize = 50;
 
-  // Request timeout - mobile connections can be slow
-  static const Duration _timeout = Duration(seconds: 30);
+  // Request timeout - mobile connections can be slow.
+  // Increased from 30s to 90s because ArcGIS can be slow on 4G networks.
+  static const Duration _timeout = Duration(seconds: 90);
+
+  // Number of retries per page on timeout
+  static const int _maxRetries = 2;
 
   /// Fetch building polygons within radius from a center point.
   ///
@@ -22,11 +27,14 @@ class ArcGISService {
   ///   radius returns thousands of polygons and causes connection aborts on
   ///   mobile networks. Increase only when on a fast connection.
   ///
+  /// [onProgress] optional callback called after each page with the running total.
+  ///
   /// Fetches results in pages of [_pageSize] to avoid oversized responses.
   Future<List<BuildingPolygon>> fetchPolygonsNearLocation({
     required double lat,
     required double lon,
     double radiusKm = 1.0,
+    void Function(int fetched)? onProgress,
   }) async {
     final radiusMeters = (radiusKm * 1000).round();
     final geometryJson =
@@ -64,9 +72,22 @@ class ArcGISService {
         print(
             '[ArcGIS] Fetching page offset=$offset, pageSize=$_pageSize ...');
 
-        final response = await http.get(uri).timeout(_timeout);
+        http.Response? response;
+        int attempt = 0;
+        while (attempt < _maxRetries) {
+          try {
+            response = await http.get(uri).timeout(_timeout);
+            break; // success
+          } catch (retryErr) {
+            attempt++;
+            print('[ArcGIS] Attempt $attempt failed: $retryErr');
+            if (attempt >= _maxRetries) rethrow;
+            print('[ArcGIS] Retrying in 3 seconds...');
+            await Future.delayed(const Duration(seconds: 3));
+          }
+        }
 
-        if (response.statusCode != 200) {
+        if (response!.statusCode != 200) {
           throw Exception(
               'ArcGIS HTTP ${response.statusCode}: ${response.body.substring(0, 200)}');
         }
@@ -88,6 +109,7 @@ class ArcGISService {
 
         allPolygons.addAll(page);
         print('[ArcGIS] Page fetched: ${page.length} features (total so far: ${allPolygons.length})');
+        onProgress?.call(allPolygons.length);
 
         // Continue paginating only if the server says there are more records
         if (exceeded && features.length == _pageSize) {

@@ -12,6 +12,7 @@ class PolygonCacheService {
     required double lat,
     required double lon,
     double radiusKm = 1.0,
+    void Function(int fetched)? onProgress,
   }) async {
     try {
       // Check connectivity
@@ -29,6 +30,7 @@ class PolygonCacheService {
         lat: lat,
         lon: lon,
         radiusKm: radiusKm,
+        onProgress: onProgress,
       );
 
       if (polygons.isEmpty) {
