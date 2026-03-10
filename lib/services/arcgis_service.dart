@@ -24,17 +24,20 @@ class ArcGISService {
       final radiusMeters = radiusKm * 1000;
       
       // Build query URL with spatial filter
+      // NOTE: inSR=4326 is required to tell ArcGIS the input geometry is in WGS84
+      // Without it, ArcGIS returns "Invalid query parameters" error
       final queryParams = {
         'where': '1=1', // Get all features within geometry
         'geometry': '{"x":$lon,"y":$lat,"spatialReference":{"wkid":4326}}',
         'geometryType': 'esriGeometryPoint',
+        'inSR': '4326', // Required: input spatial reference (WGS84)
         'spatialRel': 'esriSpatialRelIntersects',
         'distance': radiusMeters.toString(),
         'units': 'esriSRUnit_Meter',
         'outFields': 'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
         'returnGeometry': 'true',
         'f': 'json',
-        'token': _apiKey,
+        // Service is public - no token required
       };
 
       final uri = Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);
@@ -70,7 +73,7 @@ class ArcGISService {
         'outFields': 'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
         'returnGeometry': 'true',
         'f': 'json',
-        'token': _apiKey,
+        // Service is public - no token required
       };
 
       final uri = Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);
@@ -103,7 +106,8 @@ class ArcGISService {
   /// Test connection to ArcGIS service
   Future<bool> testConnection() async {
     try {
-      final uri = Uri.parse('$_baseUrl?f=json&token=$_apiKey');
+      // Service is public - no token required
+      final uri = Uri.parse('$_baseUrl?f=json');
       final response = await http.get(uri);
       return response.statusCode == 200;
     } catch (e) {
@@ -121,7 +125,7 @@ class ArcGISService {
         'outFields': 'socio_economic_groups',
         'returnGeometry': 'false',
         'f': 'json',
-        'token': _apiKey,
+        // Service is public - no token required
       };
 
       final uri = Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);

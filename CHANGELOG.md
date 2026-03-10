@@ -2,6 +2,18 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.2.6] - 2026-03-10
+
+### Fixed
+- **ArcGIS Building Cache Always Empty (CRITICAL)**: Fixed "Cannot perform query. Invalid query parameters" error
+  - Root cause: missing `inSR=4326` parameter in the spatial query
+  - ArcGIS requires `inSR` to know the coordinate system of the input geometry (WGS84)
+  - Without it, ArcGIS rejects the query entirely, leaving the building cache at "0 buildings • Never"
+  - Also removed the unnecessary API token from all queries — the service is public
+  - Building polygons will now load correctly when opening the pickup form
+
+---
+
 ## [3.2.5] - 2026-03-10
 
 ### Added
