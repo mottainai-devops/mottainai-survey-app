@@ -119,19 +119,7 @@ class SyncProvider with ChangeNotifier {
       // Ensure token is loaded before submitting
       await _loadTokenFromStorage();
       
-      // Get user info from storage
-      final prefs = await SharedPreferences.getInstance();
-          final userJson = prefs.getString('user');
-          String userFullName = 'Unknown';
-          String userPhoneNumber = '';
-          
-          if (userJson != null) {
-            final user = User.fromJson(json.decode(userJson));
-            userFullName = user.fullName;
-            userPhoneNumber = user.phone;
-          }
-
-          // Submit to server
+      // Submit to server
           final result = await _apiService.submitPickup(
             pickup,
             firstPhoto,

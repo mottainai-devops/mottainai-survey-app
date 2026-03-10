@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/company_service.dart';
+// ignore: unused_import
 import '../models/company.dart';
 import 'pickup_form_screen_v2.dart';
 

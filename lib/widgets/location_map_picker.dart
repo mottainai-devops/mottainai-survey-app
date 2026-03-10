@@ -27,7 +27,8 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
   bool _isLoading = true;
   String? _error;
 
-  // ArcGIS API Key
+  // ArcGIS API Key (reserved for future use)
+  // ignore: unused_field
   final String _arcgisApiKey = 'AAPTxy8BH1VEsoebNVZXo8HurDkT4HeplNOm_pLCsV2-wHXD7esJFqWCGo3oDxTaOVO68fIzhjQ4gSKqccl-uynuHunhlN5t3E_x5N010mOKYQRyFm3vYXqvila3dJ3Ax81DMK2WyxFt6mqhwzxdkdhmm7USv7-cQi07L_22-MTRC95Rns1BHueP3kR_yXyAyh1WEFAm9Q7KFELPkRpT_5cjWvbDo2rWZhtHOb5xFr_7bOA.AT1_n5wNkDcc';
 
   @override
@@ -112,7 +113,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
       widget.onLocationSelected(locationData.latitude!, locationData.longitude!);
       
       // Safely move map after ensuring it's rendered
-      if (mounted && _mapController.mapEventStream != null) {
+      if (mounted) {
         _mapController.move(_currentLocation!, 15.0);
       }
     } catch (e) {
@@ -285,7 +286,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
                             height: 30,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.3),
+                                color: Colors.blue.withValues(alpha: 0.3),
                                 shape: BoxShape.circle,
                                 border: Border.all(color: Colors.blue, width: 2),
                               ),
@@ -331,7 +332,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
+                      color: Colors.white.withValues(alpha: 0.9),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Text(

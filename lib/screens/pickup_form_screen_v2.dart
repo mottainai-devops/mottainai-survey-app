@@ -111,6 +111,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     super.dispose();
   }
 
+  // ignore: unused_element
   Future<void> _loadCompanies() async {
     setState(() {
       _isLoadingCompanies = true;
@@ -344,6 +345,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _selectDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
