@@ -376,6 +376,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     final overlays = <Polygon>[];
     final labels = <Marker>[];
 
+    print('[MAP] _rebuildOverlays called with ${_cachedPolygons.length} polygons');
+
     for (final bp in _cachedPolygons) {
       try {
         final geometryJson = jsonDecode(bp.geometry);
@@ -400,12 +402,12 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
         overlays.add(Polygon(
           points: points,
+          // color controls fill; non-null = filled, null = no fill
           color: isSelected
-              ? Colors.blue.withOpacity(0.4)
-              : polygonColor.withOpacity(0.25),
+              ? Colors.blue.withValues(alpha: 0.5)
+              : polygonColor.withValues(alpha: 0.35),
           borderColor: isSelected ? Colors.blue : polygonColor,
-          borderStrokeWidth: isSelected ? 4.0 : 2.0,
-          isFilled: true,
+          borderStrokeWidth: isSelected ? 5.0 : 3.0,
         ));
 
         // Label — only shown when zoom >= 17 (handled by keeping markers small)
@@ -433,7 +435,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: labelColor.withOpacity(0.85),
+                color: labelColor.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: Colors.white, width: 1),
               ),
@@ -454,6 +456,12 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       } catch (e) {
         print('Error building overlay for ${bp.buildingId}: $e');
       }
+    }
+
+    print('[MAP] Built ${overlays.length} polygon overlays and ${labels.length} labels');
+    if (overlays.isNotEmpty) {
+      final sample = overlays[0];
+      print('[MAP] Sample polygon: ${sample.points.length} points, first=${sample.points.isNotEmpty ? sample.points[0] : "none"}');
     }
 
     setState(() {
@@ -944,7 +952,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       maxZoom: 19,
                     ),
                     // Building polygon fills (pre-built, not rebuilt on every frame)
-                    PolygonLayer(polygons: _polygonOverlays),
+                    // simplificationTolerance=0 disables simplification for small building polygons
+                    PolygonLayer(
+                      polygons: _polygonOverlays,
+                      simplificationTolerance: 0,
+                    ),
                     // Building ID labels (pre-built)
                     MarkerLayer(markers: _polygonLabels),
                     // Selected location pin
@@ -971,7 +983,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                             height: 30,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.3),
+                                color: Colors.blue.withValues(alpha: 0.3),
                                 shape: BoxShape.circle,
                                 border:
                                     Border.all(color: Colors.blue, width: 2),
@@ -993,7 +1005,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Row(
@@ -1021,7 +1033,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -1030,8 +1042,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                               size: 16, color: Colors.green),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Text(_cacheInfo!,
-                                style: const TextStyle(fontSize: 12)),
+                            child: Text(
+                              '$_cacheInfo | overlays:${_polygonOverlays.length}',
+                              style: const TextStyle(fontSize: 11)),
                           ),
                         ],
                       ),
