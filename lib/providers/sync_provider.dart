@@ -2,11 +2,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import '../database/database_helper.dart';
 import '../services/api_service.dart';
 import '../models/pickup_submission.dart';
-import '../models/user.dart';
 
 class SyncProvider with ChangeNotifier {
   final ApiService _apiService = ApiService();
