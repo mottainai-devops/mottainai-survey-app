@@ -54,3 +54,42 @@
 - [x] Wrapped in SizedBox(height: MediaQuery * 0.45) in pickup_form_screen_v2.dart
 - [x] Root cause was ListView giving unbounded height — fixed with SizedBox
 - [x] Bump version to 3.2.22
+
+## v3.2.23 — Architecture Redesign (crash on load, progressive rendering)
+
+### Root Causes Identified
+- [x] CRASH 1: _rebuildOverlays() calls jsonDecode on 1000 polygon geometries on the UI thread
+        → Decoding 1000 JSON geometry strings synchronously in setState() blocks the UI thread
+        → On low-end devices this causes ANR (Application Not Responding) → crash
+        FIX: Move all geometry decoding to a compute() isolate (background thread)
+
+- [x] CRASH 2: _fetchCustomerNamesForPolygons makes up to 30 sequential HTTP API calls
+        before _rebuildOverlays is called. Each call is awaited serially.
+        On slow networks this takes 30–90 seconds, during which the widget is
+        in a half-initialised state. If the user navigates away, setState crashes.
+        FIX: Run customer name fetches in parallel (Future.wait) with a timeout,
+        and decouple them from the initial render — show polygons first, names later.
+
+- [x] CRASH 3: _initializeLocation → _loadPolygonsForCurrentLocation → _syncPolygons
+        is a 3-deep async chain with no isolate separation. All DB reads, JSON decoding,
+        and HTTP calls run on the main isolate. On 1000-building datasets this is fatal.
+        FIX: Separate into 3 independent phases with UI updates between each.
+
+- [x] PERF 1: The app fetches up to 1000 polygons (safety cap) but renders ALL of them
+        at once. flutter_map v7 PolygonLayer with 1000 polygons + 2000 markers is
+        extremely heavy. On low-end devices this causes jank and OOM crashes.
+        FIX: Viewport-based rendering — only render polygons visible in the current
+        map bounds. Use map camera position listener to update visible set.
+
+- [x] PERF 2: cachePolygons() does 2 DB operations per polygon (delete + insert) in a
+        batch. For 1000 polygons this is 2000 batch operations. SQLite on Android
+        can handle this but it is slow. Use INSERT OR REPLACE instead.
+        FIX: Use INSERT OR REPLACE (UPSERT) in cachePolygons().
+
+### Fixes to Apply
+- [x] Fix A: Move geometry decoding to compute() isolate
+- [x] Fix B: Parallel customer name fetches with Future.wait + 5s timeout per call
+- [x] Fix C: 3-phase progressive loading: (1) show map immediately, (2) load cache, (3) sync in background
+- [x] Fix D: Viewport-based polygon rendering (only render visible polygons)
+- [x] Fix E: INSERT OR REPLACE for polygon cache upsert
+- [x] Fix F: Bump version to 3.2.23

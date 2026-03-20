@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 12,
+      version: 13,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -66,7 +66,7 @@ class DatabaseHelper {
 
     await db.execute('''
     CREATE TABLE cached_polygons (
-      buildingId $textType,
+      buildingId $textType PRIMARY KEY,
       businessName $textNullable,
       custPhone $textNullable,
       customerEmail $textNullable,
@@ -81,81 +81,59 @@ class DatabaseHelper {
     )
     ''');
 
-    // Create index for faster spatial queries
+    // Spatial index for fast bounding box queries
     await db.execute('''
     CREATE INDEX idx_polygon_location ON cached_polygons(centerLat, centerLon)
     ''');
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 12) {
-      // Clear cached polygons - v3.2.20:
-      // Force re-sync after polygon tap + label fixes.
-      // Old cache is valid but a fresh sync ensures labels render correctly.
-      await db.execute('DELETE FROM cached_polygons');
-      print('Cleared polygon cache: forcing re-sync after v3.2.20 tap+label fixes');
-    }
-
-    if (oldVersion < 11) {
-      // Clear cached polygons - v3.2.18:
-      // Force re-sync centred on current GPS location.
-      // Old cache may have polygons from a different location (previous session).
-      await db.execute('DELETE FROM cached_polygons');
-      print('Cleared polygon cache: forcing re-sync at current GPS location (v3.2.18)');
-    }
-
-    if (oldVersion < 10) {
-      // Clear cached polygons - v3.2.10 fixes:
-      // 1. Longitude delta formula (cos(lat) instead of lat/90)
-      // 2. Radius increased from 500m to 1km
-      // Old cache may have polygons from wrong area due to broken bounding box query
-      await db.execute('DELETE FROM cached_polygons');
-      print('Cleared polygon cache: fixing bounding box formula and radius (v3.2.10)');
-    }
-
-    if (oldVersion < 9) {
-      // Clear cached polygons - v3.2.8 fixes coordinate projection (outSR=4326)
-      // Old cache has wrong coordinates (local Nigerian projection, ~80km off)
-      await db.execute('DELETE FROM cached_polygons');
-      print('Cleared polygon cache: coordinates were in wrong projection (v3.2.8 fix)');
+    // v13: Add PRIMARY KEY to buildingId so INSERT OR REPLACE works correctly.
+    // This requires recreating the table.
+    if (oldVersion < 13) {
+      await db.execute('DROP TABLE IF EXISTS cached_polygons');
+      await db.execute('''
+      CREATE TABLE cached_polygons (
+        buildingId TEXT NOT NULL PRIMARY KEY,
+        businessName TEXT,
+        custPhone TEXT,
+        customerEmail TEXT,
+        address TEXT,
+        zone TEXT,
+        socioEconomicGroups TEXT,
+        geometry TEXT NOT NULL,
+        centerLat REAL NOT NULL,
+        centerLon REAL NOT NULL,
+        lastUpdated INTEGER NOT NULL,
+        customerLabels TEXT
+      )
+      ''');
+      await db.execute('''
+      CREATE INDEX idx_polygon_location ON cached_polygons(centerLat, centerLon)
+      ''');
+      print('v13 migration: recreated cached_polygons with PRIMARY KEY on buildingId');
     }
 
     if (oldVersion < 8) {
-      // Add customer contact columns to pickups table (v3.2.5)
       const textNullable = 'TEXT';
       for (final col in ['customerName', 'customerPhone', 'customerEmail', 'customerAddress']) {
         try {
           await db.execute('ALTER TABLE pickups ADD COLUMN $col $textNullable');
-          print('Successfully added $col column to pickups table');
         } catch (e) {
-          print('Error adding $col column (may already exist): $e');
+          print('Column $col may already exist: $e');
         }
       }
     }
 
     if (oldVersion < 7) {
-      // Add socioClass column to pickups table
-      const textNullable = 'TEXT';
       try {
-        await db.execute('ALTER TABLE pickups ADD COLUMN socioClass $textNullable');
-        print('Successfully added socioClass column to pickups table');
+        await db.execute('ALTER TABLE pickups ADD COLUMN socioClass TEXT');
       } catch (e) {
-        print('Error adding socioClass column: $e');
+        print('socioClass column may already exist: $e');
       }
     }
-    
-    if (oldVersion < 6) {
-      // Add customerLabels column to cached_polygons table
-      const textNullable = 'TEXT';
-      try {
-        await db.execute('ALTER TABLE cached_polygons ADD COLUMN customerLabels $textNullable');
-      } catch (e) {
-        print('Error adding customerLabels column: $e');
-      }
-    }
-    
+
     if (oldVersion < 5) {
-      // Add company fields to pickups table
       const textNullable = 'TEXT';
       try {
         await db.execute('ALTER TABLE pickups ADD COLUMN companyId $textNullable');
@@ -163,39 +141,8 @@ class DatabaseHelper {
         await db.execute('ALTER TABLE pickups ADD COLUMN lotCode $textNullable');
         await db.execute('ALTER TABLE pickups ADD COLUMN lotName $textNullable');
       } catch (e) {
-        print('Error adding company columns: $e');
+        print('Company columns may already exist: $e');
       }
-    }
-    
-    if (oldVersion < 3) {
-      // Add polygon cache table
-      const textType = 'TEXT NOT NULL';
-      const textNullable = 'TEXT';
-      
-      await db.execute('''
-      CREATE TABLE cached_polygons (
-        buildingId $textType,
-        businessName $textNullable,
-        custPhone $textNullable,
-        customerEmail $textNullable,
-        address $textNullable,
-        zone $textNullable,
-        socioEconomicGroups $textNullable,
-        geometry $textType,
-        centerLat REAL NOT NULL,
-        centerLon REAL NOT NULL,
-        lastUpdated INTEGER NOT NULL
-      )
-      ''');
-
-      await db.execute('''
-      CREATE INDEX idx_polygon_location ON cached_polygons(centerLat, centerLon)
-      ''');
-    }
-    
-    if (oldVersion < 4) {
-      // Clear polygon cache to force re-sync with corrected JSON format
-      await db.execute('DELETE FROM cached_polygons');
     }
   }
 
@@ -248,33 +195,28 @@ class DatabaseHelper {
   }
 
   // ========== Polygon Cache Methods ==========
-  
+
+  /// Upsert a single polygon using INSERT OR REPLACE (requires PRIMARY KEY on buildingId)
   Future<int> cachePolygon(Map<String, dynamic> polygon) async {
     final db = await instance.database;
-    // Delete existing polygon with same buildingId
-    await db.delete(
+    return await db.insert(
       'cached_polygons',
-      where: 'buildingId = ?',
-      whereArgs: [polygon['buildingId']],
+      polygon,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    return await db.insert('cached_polygons', polygon);
   }
 
+  /// Bulk upsert polygons using INSERT OR REPLACE — much faster than delete+insert
   Future<void> cachePolygons(List<Map<String, dynamic>> polygons) async {
     final db = await instance.database;
     final batch = db.batch();
-    
     for (var polygon in polygons) {
-      // Delete existing
-      batch.delete(
+      batch.insert(
         'cached_polygons',
-        where: 'buildingId = ?',
-        whereArgs: [polygon['buildingId']],
+        polygon,
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      // Insert new
-      batch.insert('cached_polygons', polygon);
     }
-    
     await batch.commit(noResult: true);
   }
 
@@ -294,26 +236,23 @@ class DatabaseHelper {
     return result.isNotEmpty ? result.first : null;
   }
 
-  /// Get polygons within approximate radius (simple bounding box query)
-  /// For production, consider using a proper spatial database or R-tree index
+  /// Get polygons within approximate radius (bounding box query with spatial index)
   Future<List<Map<String, dynamic>>> getPolygonsNearLocation({
     required double lat,
     required double lon,
     double radiusKm = 1.0,
   }) async {
     final db = await instance.database;
-    
-    // Approximate degrees for radius (1 degree ≈ 111km at equator)
-    // Latitude delta is constant; longitude delta shrinks toward the poles via cos(lat)
+
     final latDelta = radiusKm / 111.0;
     final cosLat = math.cos(lat * math.pi / 180.0);
     final lonDelta = radiusKm / (111.0 * (cosLat > 0.001 ? cosLat : 0.001));
-    
+
     final minLat = lat - latDelta;
     final maxLat = lat + latDelta;
     final minLon = lon - lonDelta;
     final maxLon = lon + lonDelta;
-    
+
     return await db.query(
       'cached_polygons',
       where: 'centerLat BETWEEN ? AND ? AND centerLon BETWEEN ? AND ?',
@@ -331,7 +270,7 @@ class DatabaseHelper {
     final result = await db.rawQuery(
       'SELECT MAX(lastUpdated) as maxTime FROM cached_polygons',
     );
-    
+
     if (result.isNotEmpty && result.first['maxTime'] != null) {
       final timestamp = result.first['maxTime'] as int;
       return DateTime.fromMillisecondsSinceEpoch(timestamp);
