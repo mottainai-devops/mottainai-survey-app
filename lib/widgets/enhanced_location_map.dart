@@ -793,7 +793,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         // Map — always rendered, never blocked
         Expanded(
           child: GestureDetector(
-            onTap: _handlePolygonTap,
+            // CRITICAL: read hitNotifier.value synchronously here, in the same
+            // call frame as the tap. flutter_map v7 clears the notifier after
+            // the tap propagates, so reading it in a separate method returns null.
+            onTap: () {
+              final hitResult = _polygonHitNotifier.value;
+              if (hitResult != null && hitResult.hitValues.isNotEmpty) {
+                final buildingId = hitResult.hitValues.first;
+                final match = _cachedPolygons
+                    .where((p) => p.buildingId == buildingId)
+                    .firstOrNull;
+                if (match != null) _showBuildingInfoPopup(match);
+              }
+            },
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
@@ -840,14 +852,16 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 // Label markers
                 MarkerLayer(markers: _visibleMarkers),
 
-                // Selected location pin
+                // Selected location pin — alignment: bottomCenter so the
+                // tip of the pin icon aligns exactly with the GPS coordinate.
                 if (_selectedLocation != null)
                   MarkerLayer(
                     markers: [
                       Marker(
                         point: _selectedLocation!,
                         width: 40,
-                        height: 40,
+                        height: 48,
+                        alignment: Alignment.bottomCenter,
                         child: const Icon(
                           Icons.location_pin,
                           color: Colors.red,
@@ -857,7 +871,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     ],
                   ),
 
-                // Current location dot
+                // Current location dot — centred exactly on GPS coordinate
                 if (_currentLocation != null)
                   MarkerLayer(
                     markers: [
@@ -865,6 +879,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                         point: _currentLocation!,
                         width: 20,
                         height: 20,
+                        alignment: Alignment.center,
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.blue,

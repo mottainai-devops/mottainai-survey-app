@@ -93,3 +93,9 @@
 - [x] Fix D: Viewport-based polygon rendering (only render visible polygons)
 - [x] Fix E: INSERT OR REPLACE for polygon cache upsert
 - [x] Fix F: Bump version to 3.2.23
+
+## v3.2.24 — Polygon Tap Fix + GPS Centering Fix
+
+- [x] Fix polygon tap detection (tapping polygon does nothing)
+- [x] Fix GPS location pin not centred precisely on user's position
+- [x] Bump version to 3.2.24
