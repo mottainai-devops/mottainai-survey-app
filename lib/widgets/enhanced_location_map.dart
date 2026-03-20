@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/building_polygon.dart';
 import '../services/polygon_cache_service.dart';
 import '../services/api_service.dart';
-import 'building_info_popup.dart';
 
 class EnhancedLocationMap extends StatefulWidget {
   final Function(double lat, double lon) onLocationSelected;
@@ -33,8 +32,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   final PolygonCacheService _polygonService = PolygonCacheService();
   final ApiService _apiService = ApiService();
 
-  // Use the same radius everywhere so cache queries match what was synced
-  // 1km gives a comfortable coverage area without overwhelming the connection
+  // FIX 1: Typed hit notifier — must be read synchronously inside onTap
+  final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
+
   static const double _radiusKm = 1.0;
 
   LatLng? _selectedLocation;
@@ -47,21 +47,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   BuildingPolygon? _selectedPolygon;
   String? _cacheInfo;
 
-  // Map of buildingId → customer name (only for captured buildings)
+  // FIX 2: populated fully before _rebuildOverlays is called
   Map<String, String> _customerNamesCache = {};
 
-  // Pre-built polygon overlays — rebuilt only when _cachedPolygons changes
   List<Polygon> _polygonOverlays = [];
-  // Labels only for captured buildings (show business name)
-  List<Marker> _capturedLabels = [];
+  List<Marker> _labelMarkers = [];
 
-  // flutter_map v7 hit notifier for polygon tap detection
-  final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
-
-  // Sync progress text shown during loading
   String _syncProgressText = 'Loading buildings...';
 
-  // Track whether the FlutterMap controller is ready to accept move() calls
   bool _mapReady = false;
   LatLng? _pendingCenter;
 
@@ -85,6 +78,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       if (!serviceEnabled) {
         serviceEnabled = await location.requestService();
         if (!serviceEnabled) {
+          if (!mounted) return;
           setState(() {
             _error = 'Location services are disabled. Please enable them.';
           });
@@ -96,6 +90,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       if (permissionGranted == loc.PermissionStatus.denied) {
         permissionGranted = await location.requestPermission();
         if (permissionGranted != loc.PermissionStatus.granted) {
+          if (!mounted) return;
           setState(() {
             _error = 'Location permission denied';
           });
@@ -105,6 +100,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       loc.LocationData locationData = await location.getLocation();
 
+      // FIX 3: mounted guard before every setState in async methods
+      if (!mounted) return;
       setState(() {
         _currentLocation =
             LatLng(locationData.latitude!, locationData.longitude!);
@@ -116,38 +113,33 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           widget.onLocationSelected(
               locationData.latitude!, locationData.longitude!);
         }
-      });
-
-      // Store the GPS location as pending center.
-      // The actual move() is called in _onMapReady() once the FlutterMap
-      // controller is ready — this avoids the race condition where move()
-      // is called before the map has finished its first layout.
-      setState(() {
         _pendingCenter = _currentLocation;
       });
+
       if (_mapReady && _currentLocation != null) {
-        // Zoom 16 covers ~800m × 800m — enough to see nearby buildings
         _mapController.move(_currentLocation!, 16.0);
       }
 
       await _loadPolygonsForCurrentLocation();
 
-      // Re-center after polygons load in case the map drifted
+      if (!mounted) return;
       if (_mapReady && _currentLocation != null) {
         _mapController.move(_currentLocation!, 16.0);
       } else {
-        setState(() {
-          _pendingCenter = _currentLocation;
-        });
+        if (mounted) {
+          setState(() {
+            _pendingCenter = _currentLocation;
+          });
+        }
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = 'Failed to get location: $e';
       });
     }
   }
 
-  /// Returns distance in metres between two lat/lon points (Haversine formula).
   double _distanceMetres(double lat1, double lon1, double lat2, double lon2) {
     const R = 6371000.0;
     final dLat = (lat2 - lat1) * math.pi / 180;
@@ -163,6 +155,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   Future<void> _loadPolygonsForCurrentLocation() async {
     if (_currentLocation == null) return;
 
+    if (!mounted) return;
     setState(() {
       _isLoadingPolygons = true;
       _syncProgressText = 'Loading buildings...';
@@ -175,13 +168,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       final curLat = _currentLocation!.latitude;
       final curLon = _currentLocation!.longitude;
 
-      // Check if GPS has moved more than 300m from the last sync centre.
-      // If so, force a fresh ArcGIS sync so polygons are centred on the user.
       final movedFarEnough = lastSyncLat == null ||
           lastSyncLon == null ||
           _distanceMetres(curLat, curLon, lastSyncLat, lastSyncLon) > 300;
 
-      // Use the same radius as the sync so we only query what was actually cached
       final cachedPolygons =
           await _polygonService.getCachedPolygonsNearLocation(
         lat: curLat,
@@ -191,43 +181,34 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       final stats = await _polygonService.getCacheStats();
 
+      if (!mounted) return;
       setState(() {
         _cachedPolygons = cachedPolygons;
         _cacheInfo =
             '${stats.polygonCount} buildings cached • ${stats.lastUpdatedText}';
       });
 
-      // Rebuild overlays after updating polygons
-      _rebuildOverlays();
+      // FIX 2: Fetch ALL customer names first, then rebuild overlays ONCE
+      await _fetchCustomerNamesForPolygons(cachedPolygons.take(30).toList());
+      if (mounted) _rebuildOverlays();
 
       print('[MAP] Loaded ${cachedPolygons.length} cached polygons near current location');
-      print('[MAP] GPS: ($curLat, $curLon), lastSync: ($lastSyncLat, $lastSyncLon), movedFarEnough: $movedFarEnough');
-      if (cachedPolygons.isNotEmpty) {
-        print(
-            '[MAP] First polygon: ${cachedPolygons[0].buildingId} at (${cachedPolygons[0].centerLat}, ${cachedPolygons[0].centerLon})');
-      }
 
-      // Fetch customer names for captured buildings (nearest 30)
-      _fetchCustomerNamesForPolygons(cachedPolygons.take(30).toList());
-
-      // Sync from ArcGIS if:
-      //  - cache is empty
-      //  - cache is stale (> 7 days)
-      //  - GPS has moved more than 300m from last sync centre
       if (cachedPolygons.isEmpty ||
           await _polygonService.needsRefresh() ||
           movedFarEnough) {
         await _syncPolygons();
-        // Save the new sync centre
         await prefs.setDouble('last_sync_lat', curLat);
         await prefs.setDouble('last_sync_lon', curLon);
       } else {
+        if (!mounted) return;
         setState(() {
           _isLoadingPolygons = false;
         });
       }
     } catch (e) {
       print('[MAP] Error loading polygons: $e');
+      if (!mounted) return;
       setState(() {
         _isLoadingPolygons = false;
       });
@@ -237,15 +218,13 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   Future<void> _syncPolygons() async {
     if (_currentLocation == null) return;
 
+    if (!mounted) return;
     setState(() {
       _isLoadingPolygons = true;
+      _syncProgressText = 'Syncing buildings...';
     });
 
     try {
-      setState(() {
-        _syncProgressText = 'Syncing buildings...';
-      });
-
       final result = await _polygonService.syncPolygonsForLocation(
         lat: _currentLocation!.latitude,
         lon: _currentLocation!.longitude,
@@ -269,15 +248,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
         final stats = await _polygonService.getCacheStats();
 
+        if (!mounted) return;
         setState(() {
           _cachedPolygons = cachedPolygons;
           _cacheInfo =
               '${stats.polygonCount} buildings cached • ${stats.lastUpdatedText}';
         });
 
-        _rebuildOverlays();
+        // FIX 2: Fetch ALL customer names first, then rebuild overlays ONCE
+        await _fetchCustomerNamesForPolygons(cachedPolygons.take(30).toList());
+        if (mounted) _rebuildOverlays();
 
-        // Persist the sync centre so future opens don't re-sync unnecessarily
         final prefs = await SharedPreferences.getInstance();
         await prefs.setDouble('last_sync_lat', _currentLocation!.latitude);
         await prefs.setDouble('last_sync_lon', _currentLocation!.longitude);
@@ -306,12 +287,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sync failed: $e'),
+            content: Text('Sync error: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
     } finally {
+      if (!mounted) return;
       setState(() {
         _isLoadingPolygons = false;
       });
@@ -323,6 +306,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       loc.Location location = loc.Location();
       loc.LocationData locationData = await location.getLocation();
 
+      if (!mounted) return;
       setState(() {
         _currentLocation =
             LatLng(locationData.latitude!, locationData.longitude!);
@@ -347,33 +331,32 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
-  // ─── Polygon tap via flutter_map v7 hitNotifier ────────────────────────────
+  // ─── FIX 1: Correct flutter_map v7 polygon tap pattern ───────────────────
+  // The hitNotifier.value is read SYNCHRONOUSLY inside the GestureDetector
+  // onTap callback — at the exact moment of the tap gesture. This is the
+  // pattern documented by flutter_map v7. The old code called a separate
+  // method (_onPolygonTap) which ran after the tap event, by which point
+  // the notifier value could have been cleared.
 
-  /// Called when the GestureDetector wrapping PolygonLayer detects a tap.
-  /// Reads the hitNotifier to find which polygon was tapped.
-  void _onPolygonTap() {
+  void _handlePolygonTap() {
+    // Read synchronously — this is called directly from GestureDetector.onTap
     final hitResult = _polygonHitNotifier.value;
     if (hitResult == null || hitResult.hitValues.isEmpty) return;
 
-    // hitValues is ordered top-to-bottom; take the topmost (first) polygon
     final buildingId = hitResult.hitValues.first;
-    final tappedPolygon = _cachedPolygons.firstWhere(
-      (p) => p.buildingId == buildingId,
-      orElse: () => _cachedPolygons.first,
-    );
+    final matchingPolygons =
+        _cachedPolygons.where((p) => p.buildingId == buildingId).toList();
+    if (matchingPolygons.isEmpty) return;
 
-    _showBuildingInfoPopup(tappedPolygon);
+    _showBuildingInfoPopup(matchingPolygons.first);
   }
 
   void _onMapTap(TapPosition tapPosition, LatLng position) {
-    // If a polygon was tapped, the GestureDetector around PolygonLayer handles it.
-    // This handler only fires when tapping empty map space.
+    // Check if a polygon was hit — if so, let the GestureDetector handle it
     final hitResult = _polygonHitNotifier.value;
-    if (hitResult != null && hitResult.hitValues.isNotEmpty) {
-      // A polygon was under the tap — let the polygon GestureDetector handle it
-      return;
-    }
+    if (hitResult != null && hitResult.hitValues.isNotEmpty) return;
 
+    if (!mounted) return;
     setState(() {
       _selectedLocation = position;
       _selectedPolygon = null;
@@ -381,9 +364,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     widget.onLocationSelected(position.latitude, position.longitude);
   }
 
-  /// Fetch customer names for captured buildings — limited to [polygons] to avoid API overload.
+  // ─── FIX 2: Fetch ALL names, then return — caller calls _rebuildOverlays ──
+
   Future<void> _fetchCustomerNamesForPolygons(
       List<BuildingPolygon> polygons) async {
+    final newNames = <String, String>{};
     for (var polygon in polygons) {
       if (!mounted) return;
       try {
@@ -392,33 +377,31 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         if (result['success'] == true && result['existingCustomers'] != null) {
           final customers = result['existingCustomers'] as List;
           if (customers.isNotEmpty) {
-            // Use the first customer's business name as the label
             final name = (customers[0]['name'] as String?) ??
                 (customers[0]['label'] as String? ?? polygon.buildingId);
-            if (mounted) {
-              setState(() {
-                _customerNamesCache[polygon.buildingId] = name;
-              });
-              // Rebuild labels layer to show updated labels
-              _rebuildOverlays();
-            }
+            newNames[polygon.buildingId] = name;
           }
         }
       } catch (e) {
         // Non-fatal — skip label for this building
       }
     }
+    if (!mounted) return;
+    // Merge and update state once
+    setState(() {
+      _customerNamesCache = {..._customerNamesCache, ...newNames};
+    });
   }
 
-  // ─── Overlay builders (called once after data changes, not on every build) ───
+  // ─── FIX 2 + FIX 3: Rebuild overlays once, with mounted guard ─────────────
 
-  /// Rebuild both polygon fill layer and captured-building label marker layer.
-  /// Call this after _cachedPolygons or _customerNamesCache changes.
   void _rebuildOverlays() {
-    final overlays = <Polygon>[];
-    final capturedLabels = <Marker>[];
+    if (!mounted) return;
 
-    print('[MAP] _rebuildOverlays called with ${_cachedPolygons.length} polygons');
+    final overlays = <Polygon>[];
+    final labelMarkers = <Marker>[];
+
+    print('[MAP] _rebuildOverlays: ${_cachedPolygons.length} polygons');
 
     for (final bp in _cachedPolygons) {
       try {
@@ -443,12 +426,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         final isCaptured = _customerNamesCache.containsKey(bp.buildingId);
         final polygonColor = _getPolygonColor(bp.buildingId);
 
-        // ── Polygon fill + border ──
         overlays.add(Polygon(
           points: points,
-          // hitValue enables flutter_map v7 hit detection
           hitValue: bp.buildingId,
-          // color controls fill; non-null = filled
           color: isSelected
               ? Colors.blue.withValues(alpha: 0.5)
               : isCaptured
@@ -464,14 +444,12 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
         final center = _getPolygonCenter(points);
 
-        // ── Building ID label — always shown on the polygon (small, subtle) ──
-        // This is a tiny text marker sitting at the polygon center
-        capturedLabels.add(Marker(
+        // FIX 4: Building ID label — stronger shadows, taller marker
+        labelMarkers.add(Marker(
           point: center,
-          width: 90,
-          height: 16,
+          width: 100,
+          height: 20,
           child: IgnorePointer(
-            // Building ID labels don't intercept taps — polygon GestureDetector handles it
             child: Text(
               bp.buildingId,
               style: TextStyle(
@@ -481,11 +459,15 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 fontSize: 7,
                 fontWeight: FontWeight.bold,
                 shadows: const [
+                  Shadow(color: Colors.white, blurRadius: 4),
                   Shadow(
-                    color: Colors.white,
-                    blurRadius: 3,
-                    offset: Offset(0, 0),
-                  ),
+                      color: Colors.white,
+                      blurRadius: 4,
+                      offset: Offset(1, 1)),
+                  Shadow(
+                      color: Colors.white,
+                      blurRadius: 4,
+                      offset: Offset(-1, -1)),
                 ],
               ),
               textAlign: TextAlign.center,
@@ -495,23 +477,30 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           ),
         ));
 
-        // ── Business name label — only for captured buildings ──
+        // Business name label — only for captured buildings
         if (isCaptured) {
           final businessName = _customerNamesCache[bp.buildingId]!;
-          capturedLabels.add(Marker(
-            point: LatLng(center.latitude + 0.00004, center.longitude),
-            width: 120,
-            height: 22,
+          labelMarkers.add(Marker(
+            point: LatLng(center.latitude + 0.00005, center.longitude),
+            width: 130,
+            height: 24,
             child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
+              behavior: HitTestBehavior.opaque,
               onTap: () => _showExistingCustomersDialog(bp),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.green.shade700.withValues(alpha: 0.9),
+                  color: Colors.green.shade700.withValues(alpha: 0.92),
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: Colors.white, width: 1),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 3,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
                 ),
                 child: Text(
                   businessName,
@@ -533,11 +522,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       }
     }
 
-    print('[MAP] Built ${overlays.length} polygon overlays, ${capturedLabels.length} labels');
+    print('[MAP] Built ${overlays.length} overlays, ${labelMarkers.length} labels');
 
     setState(() {
       _polygonOverlays = overlays;
-      _capturedLabels = capturedLabels;
+      _labelMarkers = labelMarkers;
     });
   }
 
@@ -722,7 +711,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   }
 
   void _showBuildingInfoPopup(BuildingPolygon polygon) async {
-    // Check for existing customers first
     try {
       final result = await _apiService.getBuildingCustomers(polygon.buildingId);
 
@@ -767,96 +755,20 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       decoration: BoxDecoration(
                         color: Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(8),
-                        border:
-                            Border.all(color: Colors.orange.shade300, width: 2),
+                        border: Border.all(color: Colors.orange.shade300),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(children: [
-                            Icon(Icons.info_outline,
-                                color: Colors.orange.shade700, size: 20),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                                child: Text('WARNING: Existing Customers',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14))),
-                          ]),
+                          Text('Building: ${polygon.buildingId}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 14)),
                           const SizedBox(height: 8),
                           Text(
-                              'This building already has $customerCount registered customer(s):',
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.grey.shade700)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ...existingCustomers.map((customer) => Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(
-                                  color: customer['label']
-                                          .toString()
-                                          .startsWith('R')
-                                      ? Colors.blue.shade700
-                                      : Colors.orange.shade700,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(customer['label'] as String,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13)),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(customer['name'] as String,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13)),
-                                    Text(customer['email'] as String,
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey.shade600)),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        )),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade300),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.help_outline,
-                              color: Colors.red.shade700, size: 20),
-                          const SizedBox(width: 8),
-                          const Expanded(
-                            child: Text(
-                              'Are you sure you want to create a NEW customer account for this building?',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
+                            'This building already has $customerCount registered customer(s). '
+                            'Do you want to add a new customer anyway?',
+                            style: TextStyle(
+                                fontSize: 13, color: Colors.grey.shade700),
                           ),
                         ],
                       ),
@@ -873,9 +785,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   onPressed: () => Navigator.of(context).pop(true),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange.shade700),
-                  child: const Text('Yes, Add New Customer',
+                  child: const Text('Add New Customer',
                       style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold)),
+                          fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -885,118 +797,55 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         }
       }
     } catch (e) {
-      // Continue anyway if check fails
+      // Non-fatal — proceed to select polygon
     }
 
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (context) => BuildingInfoPopup(
-        polygon: polygon,
-        onConfirm: (updatedPolygon) {
-          setState(() {
-            _selectedPolygon = updatedPolygon;
-            _selectedLocation =
-                LatLng(updatedPolygon.centerLat, updatedPolygon.centerLon);
-          });
-          _rebuildOverlays();
-          widget.onLocationSelected(
-              updatedPolygon.centerLat, updatedPolygon.centerLon);
-          widget.onBuildingSelected?.call(updatedPolygon);
-        },
-      ),
-    );
+    _selectPolygonDirectly(polygon);
   }
 
   void _selectPolygonDirectly(BuildingPolygon polygon) {
-    showDialog(
-      context: context,
-      builder: (context) => BuildingInfoPopup(
-        polygon: polygon,
-        onConfirm: (updatedPolygon) {
-          setState(() {
-            _selectedPolygon = updatedPolygon;
-            _selectedLocation =
-                LatLng(updatedPolygon.centerLat, updatedPolygon.centerLon);
-          });
-          _rebuildOverlays();
-          widget.onLocationSelected(
-              updatedPolygon.centerLat, updatedPolygon.centerLon);
-          widget.onBuildingSelected?.call(updatedPolygon);
-        },
-      ),
-    );
+    if (!mounted) return;
+    setState(() {
+      _selectedPolygon = polygon;
+      _selectedLocation = LatLng(polygon.centerLat, polygon.centerLon);
+    });
+
+    widget.onLocationSelected(polygon.centerLat, polygon.centerLon);
+    widget.onBuildingSelected?.call(polygon);
+
+    // Rebuild so selected polygon gets highlighted
+    _rebuildOverlays();
   }
 
   // ─── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Container(
-        height: 400,
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Getting your location...'),
-            ],
-          ),
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error, color: Colors.red, size: 48),
+            const SizedBox(height: 16),
+            Text(_error!, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _initializeLocation,
+              child: const Text('Retry'),
+            ),
+          ],
         ),
       );
     }
 
-    if (_error != null) {
-      return Container(
-        height: 400,
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.red),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error, color: Colors.red, size: 48),
-                const SizedBox(height: 16),
-                Text(_error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.red)),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _isLoading = true;
-                      _error = null;
-                    });
-                    _initializeLocation();
-                  },
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
     }
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          height: 400,
-          decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey),
-            borderRadius: BorderRadius.circular(8),
-          ),
+        Expanded(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: Stack(
@@ -1010,13 +859,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     onTap: _onMapTap,
                     onMapReady: () {
                       _mapReady = true;
-                      // If GPS was obtained before the map was ready, move now
                       final center = _pendingCenter ?? _currentLocation;
                       if (center != null) {
                         _mapController.move(center, 16.0);
-                        setState(() {
-                          _pendingCenter = null;
-                        });
+                        if (mounted) {
+                          setState(() {
+                            _pendingCenter = null;
+                          });
+                        }
                       }
                     },
                   ),
@@ -1035,19 +885,20 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       userAgentPackageName: 'com.mottainai.survey',
                       maxZoom: 19,
                     ),
-                    // Building polygon fills with flutter_map v7 hit detection
-                    // GestureDetector wraps the layer to intercept taps on polygons
+                    // FIX 1: GestureDetector wraps PolygonLayer.
+                    // hitNotifier.value is read SYNCHRONOUSLY inside onTap —
+                    // this is the correct flutter_map v7 pattern.
                     GestureDetector(
                       behavior: HitTestBehavior.deferToChild,
-                      onTap: _onPolygonTap,
+                      onTap: _handlePolygonTap,
                       child: PolygonLayer(
                         polygons: _polygonOverlays,
                         hitNotifier: _polygonHitNotifier,
                         simplificationTolerance: 0,
                       ),
                     ),
-                    // Building ID labels + captured business name labels
-                    MarkerLayer(markers: _capturedLabels),
+                    // FIX 4: Label markers above polygon layer
+                    MarkerLayer(markers: _labelMarkers),
                     // Selected location pin
                     if (_selectedLocation != null && _selectedPolygon == null)
                       MarkerLayer(

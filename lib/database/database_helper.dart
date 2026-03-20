@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -88,6 +88,14 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 12) {
+      // Clear cached polygons - v3.2.20:
+      // Force re-sync after polygon tap + label fixes.
+      // Old cache is valid but a fresh sync ensures labels render correctly.
+      await db.execute('DELETE FROM cached_polygons');
+      print('Cleared polygon cache: forcing re-sync after v3.2.20 tap+label fixes');
+    }
+
     if (oldVersion < 11) {
       // Clear cached polygons - v3.2.18:
       // Force re-sync centred on current GPS location.
