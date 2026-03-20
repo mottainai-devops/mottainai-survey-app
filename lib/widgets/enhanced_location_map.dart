@@ -894,8 +894,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       userAgentPackageName: 'com.mottainai.survey',
                       maxZoom: 19,
                       panBuffer: 0,
-                      // Opacity 0 on fallback — OSM already has labels built in
-                      opacity: 0.85,
                     ),
                     // FIX 1: GestureDetector wraps PolygonLayer.
                     // hitNotifier.value is read SYNCHRONOUSLY inside onTap —
