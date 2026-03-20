@@ -104,3 +104,10 @@
 - [x] Diagnose crash source in v3.2.24 — isolate-unsafe custom classes in compute()
 - [x] Fix: return plain List<Map> from compute(), reconstruct LatLng on main thread
 - [x] Bump version to 3.2.25
+
+## v3.2.26 — Label Overcrowding & Viewport Culling Fix
+- [x] Fix _updateVisiblePolygons to correctly filter by map bounds
+- [x] Add zoom threshold: only show labels when zoom >= 15
+- [x] Cap visible overlay count to 60 polygons + labels max
+- [x] Reduce label font size (25% reduction per UX preference)
+- [x] Bump version to 3.2.26

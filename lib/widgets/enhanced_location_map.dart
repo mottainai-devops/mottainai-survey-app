@@ -144,6 +144,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   // Camera bounds for viewport culling
   LatLngBounds? _currentBounds;
+  double _currentZoom = 16.0;
+
+  // Debounce timer for viewport culling
+  Timer? _cullingDebounce;
 
   @override
   void initState() {
@@ -153,6 +157,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   @override
   void dispose() {
+    _cullingDebounce?.cancel();
     _polygonHitNotifier.dispose();
     super.dispose();
   }
@@ -431,19 +436,39 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   void _updateVisiblePolygons() {
     if (!mounted) return;
 
-    final bounds = _currentBounds;
+    // Use the live camera bounds from MapController when available.
+    // _currentBounds is set by onPositionChanged but may be null on first call
+    // (before any camera move). Fall back to controller bounds if ready.
+    LatLngBounds? bounds = _currentBounds;
+    double zoom = _currentZoom;
+    if (bounds == null && _mapReady) {
+      try {
+        bounds = _mapController.camera.visibleBounds;
+        zoom = _mapController.camera.zoom;
+      } catch (_) {
+        // camera not ready yet — skip culling this frame
+      }
+    }
 
+    // Zoom threshold: only show labels when zoomed in enough to read them.
+    // Below zoom 15 the labels are too small and just create clutter.
+    final showLabels = zoom >= 15.0;
+
+    const int maxPolygons = 60; // hard cap to prevent OOM on low-end devices
     final visiblePolygons = <Polygon>[];
     final visibleMarkers = <Marker>[];
 
     for (int i = 0; i < _allPolygonData.length; i++) {
+      if (visiblePolygons.length >= maxPolygons) break;
+
       final pd = _allPolygonData[i];
       final ld = _allLabelData[i];
 
-      // If bounds are known, cull polygons outside viewport (with 20% padding)
+      // Viewport culling: skip polygons whose centroid is outside the visible
+      // bounds (with a small 10% padding to avoid pop-in at edges).
       if (bounds != null) {
-        final padLat = (bounds.north - bounds.south) * 0.2;
-        final padLon = (bounds.east - bounds.west) * 0.2;
+        final padLat = (bounds.north - bounds.south) * 0.1;
+        final padLon = (bounds.east - bounds.west) * 0.1;
         if (ld.center.latitude < bounds.south - padLat ||
             ld.center.latitude > bounds.north + padLat ||
             ld.center.longitude < bounds.west - padLon ||
@@ -472,74 +497,77 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         borderStrokeWidth: isSelected ? 5.0 : 2.5,
       ));
 
-      // Building ID label
-      visibleMarkers.add(Marker(
-        point: ld.center,
-        width: 100,
-        height: 20,
-        child: IgnorePointer(
-          child: Text(
-            pd.buildingId,
-            style: TextStyle(
-              color: isCaptured ? Colors.green.shade900 : Colors.blue.shade900,
-              fontSize: 7,
-              fontWeight: FontWeight.bold,
-              shadows: const [
-                Shadow(color: Colors.white, blurRadius: 4),
-                Shadow(color: Colors.white, blurRadius: 4, offset: Offset(1, 1)),
-                Shadow(color: Colors.white, blurRadius: 4, offset: Offset(-1, -1)),
-              ],
-            ),
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
-          ),
-        ),
-      ));
-
-      // Business name badge — only for captured buildings
-      if (isCaptured) {
-        final businessName = _customerNames[pd.buildingId]!;
+      // Labels: only render when zoomed in enough
+      if (showLabels) {
+        // Building ID label — small, shadow-backed, non-interactive
         visibleMarkers.add(Marker(
-          point: LatLng(ld.center.latitude + 0.00005, ld.center.longitude),
-          width: 130,
-          height: 24,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              final match = _cachedPolygons
-                  .where((p) => p.buildingId == pd.buildingId)
-                  .firstOrNull;
-              if (match != null) _showExistingCustomersDialog(match);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.green.shade700.withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.white, width: 1),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 3,
-                    offset: Offset(0, 1),
-                  ),
+          point: ld.center,
+          width: 80,
+          height: 16,
+          child: IgnorePointer(
+            child: Text(
+              pd.buildingId,
+              style: TextStyle(
+                color: isCaptured ? Colors.green.shade900 : Colors.blue.shade900,
+                fontSize: 6, // 25% smaller per UX preference
+                fontWeight: FontWeight.bold,
+                shadows: const [
+                  Shadow(color: Colors.white, blurRadius: 3),
+                  Shadow(color: Colors.white, blurRadius: 3, offset: Offset(1, 1)),
+                  Shadow(color: Colors.white, blurRadius: 3, offset: Offset(-1, -1)),
                 ],
               ),
-              child: Text(
-                businessName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 8,
-                  fontWeight: FontWeight.bold,
-                ),
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-              ),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
         ));
+
+        // Business name badge — only for captured buildings, tappable
+        if (isCaptured) {
+          final businessName = _customerNames[pd.buildingId]!;
+          visibleMarkers.add(Marker(
+            point: LatLng(ld.center.latitude + 0.00005, ld.center.longitude),
+            width: 120,
+            height: 22,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                final match = _cachedPolygons
+                    .where((p) => p.buildingId == pd.buildingId)
+                    .firstOrNull;
+                if (match != null) _showExistingCustomersDialog(match);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade700.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: Colors.white, width: 1),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 2,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  businessName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 7,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+            ),
+          ));
+        }
       }
     }
 
@@ -851,11 +879,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   }
                 },
                 onPositionChanged: (camera, hasGesture) {
-                  // Update viewport bounds for culling
+                  // Always capture latest bounds and zoom from the camera
                   _currentBounds = camera.visibleBounds;
-                  // Debounce: only re-render if polygons are loaded
+                  _currentZoom = camera.zoom;
+                  // Debounce culling: wait 300ms after last camera move
+                  // to avoid rebuilding on every pixel of a pan gesture.
                   if (_allPolygonData.isNotEmpty) {
-                    _updateVisiblePolygons();
+                    _cullingDebounce?.cancel();
+                    _cullingDebounce = Timer(
+                      const Duration(milliseconds: 300),
+                      _updateVisiblePolygons,
+                    );
                   }
                 },
               ),
