@@ -820,11 +820,25 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     widget.initialLon ?? 3.3792,
                   ),
               initialZoom: 17.5,
-              // Empty-space tap handler.
-              // Polygon taps are handled by the GestureDetector wrapping
-              // PolygonLayer in the children list below.
+              // MapOptions.onTap is ALWAYS invoked regardless of layers.
+              // We check _polygonHitNotifier.value here to detect polygon taps.
+              // If a polygon was hit, show the building info popup.
+              // If no polygon was hit, treat as an empty-space tap (set pin).
               onTap: (tapPosition, latlng) {
                 if (!mounted) return;
+                final hitResult = _polygonHitNotifier.value;
+                if (hitResult != null && hitResult.hitValues.isNotEmpty) {
+                  // Polygon tap — show building info
+                  final buildingId = hitResult.hitValues.first;
+                  final match = _cachedPolygons
+                      .where((p) => p.buildingId == buildingId)
+                      .firstOrNull;
+                  if (match != null) {
+                    _showBuildingInfoPopup(match);
+                    return;
+                  }
+                }
+                // Empty-space tap — set location pin
                 setState(() {
                   _selectedLocation = latlng;
                   _selectedPolygon = null;
@@ -868,30 +882,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
               ),
 
               // Polygon layer with hit testing.
-              // GestureDetector with HitTestBehavior.deferToChild fires ONLY
-              // when PolygonLayer reports a hit — i.e. after flutter_map's
-              // hit testing runs and _polygonHitNotifier.value is populated.
-              GestureDetector(
-                behavior: HitTestBehavior.deferToChild,
-                onTap: () {
-                  final hitResult = _polygonHitNotifier.value;
-                  if (hitResult == null || hitResult.hitValues.isEmpty) return;
-                  final buildingId = hitResult.hitValues.first;
-                  final match = _cachedPolygons
-                      .where((p) => p.buildingId == buildingId)
-                      .firstOrNull;
-                  if (match != null) {
-                    _showBuildingInfoPopup(match);
-                  }
-                },
-                child: PolygonLayer(
-                  polygons: _visiblePolygons,
-                  hitNotifier: _polygonHitNotifier,
-                ),
+              // hitNotifier is populated by flutter_map's hit testing before
+              // MapOptions.onTap fires. We read it in onTap above.
+              PolygonLayer(
+                polygons: _visiblePolygons,
+                hitNotifier: _polygonHitNotifier,
               ),
 
-              // Label markers (building IDs + business name badges)
-              MarkerLayer(markers: _visibleMarkers),
+              // Label markers (building IDs + business name badges).
+              // Wrapped in TranslucentPointer so marker hit tests don't
+              // block polygon hit tests on the layer below.
+              TranslucentPointer(
+                child: MarkerLayer(markers: _visibleMarkers),
+              ),
 
               // Selected location pin — tip aligned to GPS coordinate
               if (_selectedLocation != null)
