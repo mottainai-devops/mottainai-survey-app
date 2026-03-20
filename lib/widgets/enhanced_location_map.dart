@@ -896,47 +896,53 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 child: MarkerLayer(markers: _visibleMarkers),
               ),
 
-              // Selected location pin — tip aligned to GPS coordinate
+              // Selected location pin — tip aligned to GPS coordinate.
+              // TranslucentPointer: lets polygon hit tests pass through.
               if (_selectedLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _selectedLocation!,
-                      width: 40,
-                      height: 48,
-                      alignment: Alignment.bottomCenter,
-                      child: const Icon(
-                        Icons.location_pin,
-                        color: Colors.red,
-                        size: 40,
-                      ),
-                    ),
-                  ],
-                ),
-
-              // Current location dot — centred on GPS coordinate
-              if (_currentLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _currentLocation!,
-                      width: 20,
-                      height: 20,
-                      alignment: Alignment.center,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.blue,
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: Colors.white, width: 2),
-                          boxShadow: const [
-                            BoxShadow(
-                                color: Colors.black26, blurRadius: 4),
-                          ],
+                TranslucentPointer(
+                  child: MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _selectedLocation!,
+                        width: 40,
+                        height: 48,
+                        alignment: Alignment.bottomCenter,
+                        child: const Icon(
+                          Icons.location_pin,
+                          color: Colors.red,
+                          size: 40,
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                ),
+
+              // Current location dot — centred on GPS coordinate.
+              // TranslucentPointer: lets polygon hit tests pass through.
+              if (_currentLocation != null)
+                TranslucentPointer(
+                  child: MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _currentLocation!,
+                        width: 20,
+                        height: 20,
+                        alignment: Alignment.center,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                            border:
+                                Border.all(color: Colors.white, width: 2),
+                            boxShadow: const [
+                              BoxShadow(
+                                  color: Colors.black26, blurRadius: 4),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
             ],
           ),
