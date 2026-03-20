@@ -460,17 +460,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       visiblePolygons.add(Polygon(
         points: pd.points,
         hitValue: pd.buildingId,
+        // Increased fill opacity (0.35) and border width (3.0) so polygons
+        // are clearly visible against satellite imagery.
         color: isSelected
-            ? Colors.blue.withValues(alpha: 0.45)
+            ? Colors.blue.withValues(alpha: 0.55)
             : isCaptured
-                ? Colors.green.withValues(alpha: 0.30)
-                : polygonColor.withValues(alpha: 0.20),
+                ? Colors.green.withValues(alpha: 0.45)
+                : polygonColor.withValues(alpha: 0.35),
         borderColor: isSelected
             ? Colors.blue
             : isCaptured
                 ? Colors.green.shade700
                 : polygonColor,
-        borderStrokeWidth: isSelected ? 4.0 : 2.0,
+        borderStrokeWidth: isSelected ? 5.0 : 3.0,
       ));
 
       if (showLabels) {
@@ -935,6 +937,32 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             ],
           ),
         ),
+
+        // DEBUG OVERLAY — shows first polygon coordinates to diagnose
+        // coordinate system issues. Remove after diagnosis is complete.
+        if (_allPolygonData.isNotEmpty)
+          Container(
+            color: Colors.black87,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Text(
+              () {
+                final first = _allPolygonData.first;
+                final pt0 = first.points.isNotEmpty ? first.points[0] : null;
+                final userLat = _currentLocation?.latitude;
+                final userLon = _currentLocation?.longitude;
+                return 'GPS: ${userLat?.toStringAsFixed(5)},${userLon?.toStringAsFixed(5)} | '
+                    'P0 center: ${first.center.latitude.toStringAsFixed(5)},${first.center.longitude.toStringAsFixed(5)} | '
+                    'P0 pt[0]: ${pt0?.latitude.toStringAsFixed(5)},${pt0?.longitude.toStringAsFixed(5)} | '
+                    'total:${_allPolygonData.length} vis:${_visiblePolygons.length}';
+              }(),
+              style: const TextStyle(
+                color: Colors.yellow,
+                fontSize: 9,
+                fontFamily: 'monospace',
+              ),
+              maxLines: 3,
+            ),
+          ),
 
         // Bottom controls
         _MapControls(
