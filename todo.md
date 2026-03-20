@@ -111,3 +111,22 @@
 - [x] Cap visible overlay count to 60 polygons + labels max
 - [x] Reduce label font size (25% reduction per UX preference)
 - [x] Bump version to 3.2.26
+
+## v3.2.27 — Full Layer Recalibration
+- [x] Root cause 1: GestureDetector wrapping entire FlutterMap fires BEFORE hit testing
+      → polygon taps never detected. FIX: Wrap only PolygonLayer with
+      GestureDetector(behavior: HitTestBehavior.deferToChild) so it fires AFTER
+      flutter_map hit testing and _polygonHitNotifier.value is populated.
+- [x] Root cause 2: _renderPolygons(useBoundsFilter: true) called before _mapReady=true
+      → _currentBounds is null → falls back to rendering first 80 polygons regardless
+      of user location. FIX: First decode always calls _renderPolygons(useBoundsFilter: false);
+      viewport culling only activates on camera moves (onPositionChanged).
+- [x] Root cause 3: Stale _currentBounds from Lagos default (6.5244, 3.3792) while user
+      is in FCT/Abuja → all 994 FCT polygons filtered out, only 2 pass bounds check.
+      FIX: useBoundsFilter=false on initial render; bounds only used after first camera move.
+- [x] Added WGS84 coordinate sanity check in isolate (Nigeria bounds: lat 4–14, lon 2–15)
+      to filter out any incorrectly cached Web Mercator (EPSG:3857) coordinates.
+- [x] Increased max visible polygons cap from 60 to 80.
+- [x] Added 20% padding to viewport culling bounds to prevent polygon pop-in at edges.
+- [x] Removed unused _LabelData class.
+- [x] Bump version to 3.2.27

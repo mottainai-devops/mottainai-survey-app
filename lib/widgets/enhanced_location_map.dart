@@ -11,25 +11,14 @@ import '../models/building_polygon.dart';
 import '../services/polygon_cache_service.dart';
 import '../services/api_service.dart';
 
-// ─── Isolate helper: decode all polygon geometries off the UI thread ──────────
-// compute() ONLY supports plain Dart types across isolate boundaries:
-// primitives, List, Map, SendPort. Custom class instances (like LatLng or
-// _PolygonRenderData) are NOT supported and cause a crash.
-// Solution: the isolate returns List<Map<String,dynamic>> with only primitive
-// values (doubles, strings, lists of doubles). LatLng objects are constructed
-// on the main thread after compute() returns — that part is cheap.
+// ─── Isolate helper ───────────────────────────────────────────────────────────
+// compute() only supports plain Dart types (primitives, List, Map).
+// Custom class instances (LatLng, etc.) are NOT isolate-safe.
+// The isolate returns only primitives; LatLng is constructed on the main thread.
 
-// Input: list of {buildingId: String, geometry: String}
-// Output: list of {
-//   buildingId: String,
-//   points: List<List<double>>,  // [[lat,lon], ...]
-//   centerLat: double,
-//   centerLon: double,
-// }
 List<Map<String, dynamic>> _decodePolygonsInIsolate(
     List<Map<String, dynamic>> input) {
   final result = <Map<String, dynamic>>[];
-
   for (final map in input) {
     try {
       final buildingId = map['buildingId'] as String? ?? '';
@@ -46,12 +35,10 @@ List<Map<String, dynamic>> _decodePolygonsInIsolate(
 
       for (final coord in ring) {
         if (coord is! List || coord.length < 2) continue;
-        final lat = coord[1] is int
-            ? (coord[1] as int).toDouble()
-            : (coord[1] as num).toDouble();
-        final lon = coord[0] is int
-            ? (coord[0] as int).toDouble()
-            : (coord[0] as num).toDouble();
+        final lat = (coord[1] as num).toDouble();
+        final lon = (coord[0] as num).toDouble();
+        // Sanity check: valid WGS84 coordinates for Nigeria
+        if (lat < 4.0 || lat > 14.0 || lon < 2.0 || lon > 15.0) continue;
         points.add([lat, lon]);
         sumLat += lat;
         sumLon += lon;
@@ -60,29 +47,24 @@ List<Map<String, dynamic>> _decodePolygonsInIsolate(
 
       result.add({
         'buildingId': buildingId,
-        'points': points,          // List<List<double>> — isolate-safe
+        'points': points,
         'centerLat': sumLat / points.length,
         'centerLon': sumLon / points.length,
       });
     } catch (_) {
-      // Skip bad geometry — never crash
+      // Skip bad geometry silently
     }
   }
-
   return result;
 }
 
-// Lightweight structs used only on the main thread (after compute returns)
+// Lightweight structs — main thread only
 class _PolygonRenderData {
   final String buildingId;
   final List<LatLng> points;
-  const _PolygonRenderData({required this.buildingId, required this.points});
-}
-
-class _LabelData {
-  final String buildingId;
   final LatLng center;
-  const _LabelData({required this.buildingId, required this.center});
+  const _PolygonRenderData(
+      {required this.buildingId, required this.points, required this.center});
 }
 
 // ─── Main widget ──────────────────────────────────────────────────────────────
@@ -112,10 +94,12 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   final PolygonCacheService _polygonService = PolygonCacheService();
   final ApiService _apiService = ApiService();
 
-  // flutter_map v7 hit notifier — read synchronously inside GestureDetector.onTap
+  // flutter_map v7 hit notifier
   final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
 
   static const double _radiusKm = 1.0;
+  static const double _labelZoomThreshold = 15.5;
+  static const int _maxVisiblePolygons = 80;
 
   LatLng? _selectedLocation;
   LatLng? _currentLocation;
@@ -126,11 +110,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   String _statusText = '';
   String? _errorText;
 
-  // Full decoded geometry — computed in isolate, never on UI thread
+  // All decoded polygon data (populated after compute())
   List<_PolygonRenderData> _allPolygonData = [];
-  List<_LabelData> _allLabelData = [];
 
-  // Viewport-filtered render lists — updated on camera move
+  // Viewport-filtered render lists
   List<Polygon> _visiblePolygons = [];
   List<Marker> _visibleMarkers = [];
 
@@ -142,11 +125,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   BuildingPolygon? _selectedPolygon;
   String? _cacheInfo;
 
-  // Camera bounds for viewport culling
+  // Camera state
   LatLngBounds? _currentBounds;
   double _currentZoom = 16.0;
-
-  // Debounce timer for viewport culling
   Timer? _cullingDebounce;
 
   @override
@@ -162,7 +143,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     super.dispose();
   }
 
-  // ─── PHASE 1: Get GPS location (show map immediately, locate in background) ─
+  // ─── PHASE 1: Get GPS location ───────────────────────────────────────────────
 
   Future<void> _startPhase1_Locate() async {
     if (!mounted) return;
@@ -200,9 +181,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       setState(() {
         _currentLocation = currentLoc;
-        _selectedLocation = (widget.initialLat != null && widget.initialLon != null)
-            ? LatLng(widget.initialLat!, widget.initialLon!)
-            : currentLoc;
+        _selectedLocation =
+            (widget.initialLat != null && widget.initialLon != null)
+                ? LatLng(widget.initialLat!, widget.initialLon!)
+                : currentLoc;
         _pendingCenter = currentLoc;
       });
 
@@ -211,18 +193,18 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             locationData.latitude!, locationData.longitude!);
       }
 
+      // Move map to user location
       if (_mapReady) {
         _mapController.move(currentLoc, 16.0);
       }
 
-      // Phase 2 starts immediately after location is known
-      _startPhase2_LoadCache();
+      await _startPhase2_LoadCache();
     } catch (e) {
       _setError('Failed to get location: $e');
     }
   }
 
-  // ─── PHASE 2: Load from local SQLite cache (fast, offline-capable) ──────────
+  // ─── PHASE 2: Load from SQLite cache ────────────────────────────────────────
 
   Future<void> _startPhase2_LoadCache() async {
     if (_currentLocation == null || !mounted) return;
@@ -233,7 +215,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
 
     try {
-      final cachedMaps = await _polygonService.getCachedPolygonsNearLocation(
+      final cachedPolygons = await _polygonService.getCachedPolygonsNearLocation(
         lat: _currentLocation!.latitude,
         lon: _currentLocation!.longitude,
         radiusKm: _radiusKm,
@@ -243,21 +225,18 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       if (!mounted) return;
 
-      _cachedPolygons = cachedMaps;
+      _cachedPolygons = cachedPolygons;
 
       setState(() {
         _cacheInfo =
             '${stats.polygonCount} buildings cached • ${stats.lastUpdatedText}';
       });
 
-      if (cachedMaps.isNotEmpty) {
-        // Decode geometries in isolate — never block UI thread
-        await _decodeAndRenderPolygons(cachedMaps);
-        // Fetch customer names in parallel — non-blocking, updates labels later
-        unawaited(_fetchCustomerNamesParallel(cachedMaps.take(50).toList()));
+      if (cachedPolygons.isNotEmpty) {
+        await _decodeAndRenderPolygons(cachedPolygons);
+        unawaited(_fetchCustomerNamesParallel(cachedPolygons.take(50).toList()));
       }
 
-      // Phase 3: background sync (always runs, even if cache has data)
       unawaited(_startPhase3_BackgroundSync());
     } catch (e) {
       if (!mounted) return;
@@ -269,7 +248,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
-  // ─── PHASE 3: Background sync from ArcGIS (never blocks UI) ─────────────────
+  // ─── PHASE 3: Background sync from ArcGIS ───────────────────────────────────
 
   Future<void> _startPhase3_BackgroundSync() async {
     if (_currentLocation == null || !mounted) return;
@@ -287,7 +266,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     final needsRefresh = await _polygonService.needsRefresh();
 
     if (!movedFarEnough && !needsRefresh && _cachedPolygons.isNotEmpty) {
-      // Cache is fresh and we haven't moved — skip sync
       if (!mounted) return;
       setState(() {
         _phase = _LoadPhase.ready;
@@ -319,7 +297,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       if (!mounted) return;
 
       if (result.success && result.polygonCount > 0) {
-        final freshMaps = await _polygonService.getCachedPolygonsNearLocation(
+        final freshPolygons =
+            await _polygonService.getCachedPolygonsNearLocation(
           lat: curLat,
           lon: curLon,
           radiusKm: _radiusKm,
@@ -327,14 +306,15 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         final stats = await _polygonService.getCacheStats();
 
         if (!mounted) return;
-        _cachedPolygons = freshMaps;
+        _cachedPolygons = freshPolygons;
         setState(() {
           _cacheInfo =
               '${stats.polygonCount} buildings cached • ${stats.lastUpdatedText}';
         });
 
-        await _decodeAndRenderPolygons(freshMaps);
-        unawaited(_fetchCustomerNamesParallel(freshMaps.take(50).toList()));
+        await _decodeAndRenderPolygons(freshPolygons);
+        unawaited(
+            _fetchCustomerNamesParallel(freshPolygons.take(50).toList()));
 
         await prefs.setDouble('last_sync_lat', curLat);
         await prefs.setDouble('last_sync_lon', curLon);
@@ -348,8 +328,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             ),
           );
         }
-      } else if (!result.success) {
-        if (mounted && _cachedPolygons.isEmpty) {
+      } else if (!result.success && _cachedPolygons.isEmpty) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(result.message),
@@ -384,8 +364,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   Future<void> _decodeAndRenderPolygons(List<BuildingPolygon> polygons) async {
     if (!mounted) return;
 
-    // Serialize to plain List<Map> — ONLY primitives cross isolate boundaries.
-    // compute() uses SendPort.send() which does NOT support custom class instances.
     final inputMaps = polygons
         .map((p) => <String, dynamic>{
               'buildingId': p.buildingId,
@@ -393,19 +371,13 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             })
         .toList();
 
-    // Run JSON decoding in a separate Dart isolate — never on UI thread.
-    // Returns List<Map<String,dynamic>> with only primitive values.
-    final rawResults = await compute(
-      _decodePolygonsInIsolate,
-      inputMaps,
-    );
+    // Heavy JSON decoding runs in a background isolate
+    final rawResults = await compute(_decodePolygonsInIsolate, inputMaps);
 
     if (!mounted) return;
 
-    // Reconstruct LatLng objects on the main thread — this is cheap.
+    // Reconstruct LatLng on main thread (cheap)
     final polygonData = <_PolygonRenderData>[];
-    final labelData = <_LabelData>[];
-
     for (final raw in rawResults) {
       final buildingId = raw['buildingId'] as String;
       final rawPoints = raw['points'] as List;
@@ -416,63 +388,67 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           .map((p) => LatLng((p as List)[0] as double, p[1] as double))
           .toList();
 
-      polygonData.add(_PolygonRenderData(buildingId: buildingId, points: points));
-      labelData.add(_LabelData(
+      polygonData.add(_PolygonRenderData(
         buildingId: buildingId,
+        points: points,
         center: LatLng(centerLat, centerLon),
       ));
     }
 
+    if (!mounted) return;
     setState(() {
       _allPolygonData = polygonData;
-      _allLabelData = labelData;
     });
 
-    _updateVisiblePolygons();
+    // Render immediately — do NOT wait for map to be ready.
+    // Pass all polygons on first render; viewport culling kicks in after
+    // the first camera move (onPositionChanged sets _currentBounds).
+    _renderPolygons(useBoundsFilter: false);
   }
 
-  // ─── Viewport culling — only render polygons in current map bounds ────────────
+  // ─── Viewport culling ────────────────────────────────────────────────────────
+  // Two modes:
+  //   useBoundsFilter=false → render all polygons (up to cap), no bounds check.
+  //     Used on first decode so polygons appear immediately regardless of map state.
+  //   useBoundsFilter=true  → filter by current camera bounds.
+  //     Used on camera moves after map is ready.
 
-  void _updateVisiblePolygons() {
-    if (!mounted) return;
+  void _renderPolygons({bool useBoundsFilter = true}) {
+    if (!mounted || _allPolygonData.isEmpty) return;
 
-    // Use the live camera bounds from MapController when available.
-    // _currentBounds is set by onPositionChanged but may be null on first call
-    // (before any camera move). Fall back to controller bounds if ready.
-    LatLngBounds? bounds = _currentBounds;
+    LatLngBounds? bounds;
     double zoom = _currentZoom;
-    if (bounds == null && _mapReady) {
-      try {
-        bounds = _mapController.camera.visibleBounds;
-        zoom = _mapController.camera.zoom;
-      } catch (_) {
-        // camera not ready yet — skip culling this frame
+
+    if (useBoundsFilter) {
+      bounds = _currentBounds;
+      // Try to get live bounds from controller if cached value is stale
+      if (bounds == null && _mapReady) {
+        try {
+          bounds = _mapController.camera.visibleBounds;
+          zoom = _mapController.camera.zoom;
+        } catch (_) {
+          // Camera not ready — fall through to no-filter mode
+        }
       }
+      // If we still have no bounds, fall back to rendering all
+      if (bounds == null) useBoundsFilter = false;
     }
 
-    // Zoom threshold: only show labels when zoomed in enough to read them.
-    // Below zoom 15 the labels are too small and just create clutter.
-    final showLabels = zoom >= 15.0;
-
-    const int maxPolygons = 60; // hard cap to prevent OOM on low-end devices
+    final showLabels = zoom >= _labelZoomThreshold;
     final visiblePolygons = <Polygon>[];
     final visibleMarkers = <Marker>[];
 
-    for (int i = 0; i < _allPolygonData.length; i++) {
-      if (visiblePolygons.length >= maxPolygons) break;
+    for (final pd in _allPolygonData) {
+      if (visiblePolygons.length >= _maxVisiblePolygons) break;
 
-      final pd = _allPolygonData[i];
-      final ld = _allLabelData[i];
-
-      // Viewport culling: skip polygons whose centroid is outside the visible
-      // bounds (with a small 10% padding to avoid pop-in at edges).
-      if (bounds != null) {
-        final padLat = (bounds.north - bounds.south) * 0.1;
-        final padLon = (bounds.east - bounds.west) * 0.1;
-        if (ld.center.latitude < bounds.south - padLat ||
-            ld.center.latitude > bounds.north + padLat ||
-            ld.center.longitude < bounds.west - padLon ||
-            ld.center.longitude > bounds.east + padLon) {
+      // Viewport culling with 20% padding to avoid pop-in at edges
+      if (useBoundsFilter && bounds != null) {
+        final padLat = (bounds.north - bounds.south) * 0.20;
+        final padLon = (bounds.east - bounds.west) * 0.20;
+        if (pd.center.latitude < bounds.south - padLat ||
+            pd.center.latitude > bounds.north + padLat ||
+            pd.center.longitude < bounds.west - padLon ||
+            pd.center.longitude > bounds.east + padLon) {
           continue;
         }
       }
@@ -485,36 +461,43 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         points: pd.points,
         hitValue: pd.buildingId,
         color: isSelected
-            ? Colors.blue.withValues(alpha: 0.5)
+            ? Colors.blue.withValues(alpha: 0.45)
             : isCaptured
-                ? Colors.green.withValues(alpha: 0.35)
-                : polygonColor.withValues(alpha: 0.25),
+                ? Colors.green.withValues(alpha: 0.30)
+                : polygonColor.withValues(alpha: 0.20),
         borderColor: isSelected
             ? Colors.blue
             : isCaptured
                 ? Colors.green.shade700
                 : polygonColor,
-        borderStrokeWidth: isSelected ? 5.0 : 2.5,
+        borderStrokeWidth: isSelected ? 4.0 : 2.0,
       ));
 
-      // Labels: only render when zoomed in enough
       if (showLabels) {
-        // Building ID label — small, shadow-backed, non-interactive
+        // Building ID label — non-interactive, shadow-backed
         visibleMarkers.add(Marker(
-          point: ld.center,
-          width: 80,
-          height: 16,
+          point: pd.center,
+          width: 90,
+          height: 18,
           child: IgnorePointer(
             child: Text(
               pd.buildingId,
               style: TextStyle(
-                color: isCaptured ? Colors.green.shade900 : Colors.blue.shade900,
-                fontSize: 6, // 25% smaller per UX preference
+                color: isCaptured
+                    ? Colors.green.shade900
+                    : Colors.blue.shade900,
+                fontSize: 7,
                 fontWeight: FontWeight.bold,
                 shadows: const [
-                  Shadow(color: Colors.white, blurRadius: 3),
-                  Shadow(color: Colors.white, blurRadius: 3, offset: Offset(1, 1)),
-                  Shadow(color: Colors.white, blurRadius: 3, offset: Offset(-1, -1)),
+                  Shadow(color: Colors.white, blurRadius: 4),
+                  Shadow(
+                      color: Colors.white,
+                      blurRadius: 4,
+                      offset: Offset(1, 1)),
+                  Shadow(
+                      color: Colors.white,
+                      blurRadius: 4,
+                      offset: Offset(-1, -1)),
                 ],
               ),
               textAlign: TextAlign.center,
@@ -524,11 +507,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           ),
         ));
 
-        // Business name badge — only for captured buildings, tappable
+        // Business name badge — only for captured buildings
         if (isCaptured) {
           final businessName = _customerNames[pd.buildingId]!;
           visibleMarkers.add(Marker(
-            point: LatLng(ld.center.latitude + 0.00005, ld.center.longitude),
+            point: LatLng(pd.center.latitude + 0.00005, pd.center.longitude),
             width: 120,
             height: 22,
             child: GestureDetector(
@@ -540,17 +523,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 if (match != null) _showExistingCustomersDialog(match);
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 decoration: BoxDecoration(
                   color: Colors.green.shade700.withValues(alpha: 0.92),
                   borderRadius: BorderRadius.circular(3),
                   border: Border.all(color: Colors.white, width: 1),
                   boxShadow: const [
                     BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 2,
-                      offset: Offset(0, 1),
-                    ),
+                        color: Colors.black26,
+                        blurRadius: 2,
+                        offset: Offset(0, 1)),
                   ],
                 ),
                 child: Text(
@@ -577,11 +560,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
   }
 
-  // ─── Parallel customer name fetching ─────────────────────────────────────────
-  // Runs all API calls concurrently (not serially) with a per-call timeout.
-  // Decoupled from initial render — polygons show immediately, names appear later.
+  // ─── Customer name fetching ───────────────────────────────────────────────────
 
-  Future<void> _fetchCustomerNamesParallel(List<BuildingPolygon> polygons) async {
+  Future<void> _fetchCustomerNamesParallel(
+      List<BuildingPolygon> polygons) async {
     const callTimeout = Duration(seconds: 5);
 
     final futures = polygons.map((polygon) async {
@@ -604,7 +586,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
 
     final results = await Future.wait(futures);
-
     if (!mounted) return;
 
     final newNames = <String, String>{};
@@ -616,11 +597,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       setState(() {
         _customerNames = {..._customerNames, ...newNames};
       });
-      _updateVisiblePolygons();
+      _renderPolygons(useBoundsFilter: _currentBounds != null);
     }
   }
 
-  // ─── Manual re-sync (Download button) ────────────────────────────────────────
+  // ─── Manual re-centre ────────────────────────────────────────────────────────
 
   Future<void> _getCurrentLocation() async {
     try {
@@ -636,7 +617,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       widget.onLocationSelected(
           locationData.latitude!, locationData.longitude!);
-      _mapController.move(_currentLocation!, 18.5);
+      _mapController.move(_currentLocation!, 16.0);
 
       await _startPhase2_LoadCache();
     } catch (e) {
@@ -651,32 +632,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     }
   }
 
-  // ─── Polygon tap handler (flutter_map v7 pattern) ────────────────────────────
-
-  void _handlePolygonTap() {
-    final hitResult = _polygonHitNotifier.value;
-    if (hitResult == null || hitResult.hitValues.isEmpty) return;
-
-    final buildingId = hitResult.hitValues.first;
-    final match =
-        _cachedPolygons.where((p) => p.buildingId == buildingId).firstOrNull;
-    if (match == null) return;
-
-    _showBuildingInfoPopup(match);
-  }
-
-  void _onMapTap(TapPosition tapPosition, LatLng position) {
-    final hitResult = _polygonHitNotifier.value;
-    if (hitResult != null && hitResult.hitValues.isNotEmpty) return;
-
-    if (!mounted) return;
-    setState(() {
-      _selectedLocation = position;
-      _selectedPolygon = null;
-    });
-    widget.onLocationSelected(position.latitude, position.longitude);
-  }
-
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
   void _setError(String message) {
@@ -687,7 +642,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
   }
 
-  double _distanceMetres(double lat1, double lon1, double lat2, double lon2) {
+  double _distanceMetres(
+      double lat1, double lon1, double lat2, double lon2) {
     const R = 6371000.0;
     final dLat = (lat2 - lat1) * math.pi / 180;
     final dLon = (lon2 - lon1) * math.pi / 180;
@@ -716,7 +672,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     setState(() {
       _selectedPolygon = polygon;
     });
-    _updateVisiblePolygons();
+    _renderPolygons(useBoundsFilter: _currentBounds != null);
 
     if (widget.onBuildingSelected != null) {
       widget.onBuildingSelected!(polygon);
@@ -732,8 +688,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         onSelect: () {
           Navigator.pop(context);
           widget.onLocationSelected(
-            double.tryParse(polygon.address?.split(',').first ?? '') ??
-                _currentLocation!.latitude,
+            _currentLocation!.latitude,
             _currentLocation!.longitude,
           );
         },
@@ -743,7 +698,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   void _showExistingCustomersDialog(BuildingPolygon polygon) async {
     try {
-      final result = await _apiService.getBuildingCustomers(polygon.buildingId);
+      final result =
+          await _apiService.getBuildingCustomers(polygon.buildingId);
 
       if (result['success'] != true || result['existingCustomers'] == null) {
         _showBuildingInfoPopup(polygon);
@@ -768,7 +724,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   color: Colors.green.shade700,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.people, color: Colors.white, size: 24),
+                child:
+                    const Icon(Icons.people, color: Colors.white, size: 24),
               ),
               const SizedBox(width: 12),
               const Expanded(
@@ -793,11 +750,13 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 return ListTile(
                   leading: CircleAvatar(
                     backgroundColor: Colors.green.shade100,
-                    child: Icon(Icons.person, color: Colors.green.shade700),
+                    child: Icon(Icons.person,
+                        color: Colors.green.shade700),
                   ),
                   title: Text(
                     customer['name'] ?? customer['label'] ?? 'Unknown',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style:
+                        const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   subtitle: Text(customer['phone'] ?? ''),
                 );
@@ -817,7 +776,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green.shade700,
               ),
-              child: const Text('ADD NEW', style: TextStyle(color: Colors.white)),
+              child: const Text('ADD NEW',
+                  style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -835,7 +795,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       children: [
         // Status banner
         if (_phase != _LoadPhase.ready && _phase != _LoadPhase.idle)
-          _StatusBanner(phase: _phase, text: _statusText, errorText: _errorText),
+          _StatusBanner(
+              phase: _phase, text: _statusText, errorText: _errorText),
 
         // Cache info chip
         if (_cacheInfo != null)
@@ -845,120 +806,133 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             onRefresh: _getCurrentLocation,
           ),
 
-        // Map — always rendered, never blocked
+        // Map — always rendered immediately
         Expanded(
-          child: GestureDetector(
-            // CRITICAL: read hitNotifier.value synchronously here, in the same
-            // call frame as the tap. flutter_map v7 clears the notifier after
-            // the tap propagates, so reading it in a separate method returns null.
-            onTap: () {
-              final hitResult = _polygonHitNotifier.value;
-              if (hitResult != null && hitResult.hitValues.isNotEmpty) {
-                final buildingId = hitResult.hitValues.first;
-                final match = _cachedPolygons
-                    .where((p) => p.buildingId == buildingId)
-                    .firstOrNull;
-                if (match != null) _showBuildingInfoPopup(match);
-              }
-            },
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentLocation ??
-                    LatLng(
-                      widget.initialLat ?? 6.5244,
-                      widget.initialLon ?? 3.3792,
-                    ),
-                initialZoom: 16.0,
-                onTap: _onMapTap,
-                onMapReady: () {
-                  _mapReady = true;
-                  if (_pendingCenter != null) {
-                    _mapController.move(_pendingCenter!, 16.0);
-                    _pendingCenter = null;
-                  }
-                },
-                onPositionChanged: (camera, hasGesture) {
-                  // Always capture latest bounds and zoom from the camera
-                  _currentBounds = camera.visibleBounds;
-                  _currentZoom = camera.zoom;
-                  // Debounce culling: wait 300ms after last camera move
-                  // to avoid rebuilding on every pixel of a pan gesture.
-                  if (_allPolygonData.isNotEmpty) {
-                    _cullingDebounce?.cancel();
-                    _cullingDebounce = Timer(
-                      const Duration(milliseconds: 300),
-                      _updateVisiblePolygons,
-                    );
-                  }
-                },
+          child: FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _currentLocation ??
+                  LatLng(
+                    widget.initialLat ?? 6.5244,
+                    widget.initialLon ?? 3.3792,
+                  ),
+              initialZoom: 16.0,
+              // Empty-space tap handler.
+              // Polygon taps are handled by the GestureDetector wrapping
+              // PolygonLayer in the children list below.
+              onTap: (tapPosition, latlng) {
+                if (!mounted) return;
+                setState(() {
+                  _selectedLocation = latlng;
+                  _selectedPolygon = null;
+                });
+                widget.onLocationSelected(latlng.latitude, latlng.longitude);
+              },
+              onMapReady: () {
+                _mapReady = true;
+                // If location was obtained before map was ready, move now
+                if (_pendingCenter != null) {
+                  _mapController.move(_pendingCenter!, 16.0);
+                  _pendingCenter = null;
+                }
+                // Re-render with bounds now that map is ready
+                if (_allPolygonData.isNotEmpty) {
+                  _renderPolygons(useBoundsFilter: false);
+                }
+              },
+              onPositionChanged: (camera, hasGesture) {
+                _currentBounds = camera.visibleBounds;
+                _currentZoom = camera.zoom;
+                // Debounce culling: 250ms after last camera move
+                if (_allPolygonData.isNotEmpty) {
+                  _cullingDebounce?.cancel();
+                  _cullingDebounce = Timer(
+                    const Duration(milliseconds: 250),
+                    () => _renderPolygons(useBoundsFilter: true),
+                  );
+                }
+              },
+            ),
+            children: [
+              // Satellite tiles with OSM fallback
+              TileLayer(
+                urlTemplate:
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                fallbackUrl:
+                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.mottainai.mottainai_survey',
+                panBuffer: 0,
               ),
-              children: [
-                // Satellite tile layer with OSM fallback
-                TileLayer(
-                  urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                  fallbackUrl:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.mottainai.mottainai_survey',
-                  panBuffer: 0,
-                ),
 
-                // Polygon layer with hit testing
-                PolygonLayer(
+              // Polygon layer with hit testing.
+              // GestureDetector with HitTestBehavior.deferToChild fires ONLY
+              // when PolygonLayer reports a hit — i.e. after flutter_map's
+              // hit testing runs and _polygonHitNotifier.value is populated.
+              GestureDetector(
+                behavior: HitTestBehavior.deferToChild,
+                onTap: () {
+                  final hitResult = _polygonHitNotifier.value;
+                  if (hitResult == null || hitResult.hitValues.isEmpty) return;
+                  final buildingId = hitResult.hitValues.first;
+                  final match = _cachedPolygons
+                      .where((p) => p.buildingId == buildingId)
+                      .firstOrNull;
+                  if (match != null) {
+                    _showBuildingInfoPopup(match);
+                  }
+                },
+                child: PolygonLayer(
                   polygons: _visiblePolygons,
                   hitNotifier: _polygonHitNotifier,
                 ),
+              ),
 
-                // Label markers
-                MarkerLayer(markers: _visibleMarkers),
+              // Label markers (building IDs + business name badges)
+              MarkerLayer(markers: _visibleMarkers),
 
-                // Selected location pin — alignment: bottomCenter so the
-                // tip of the pin icon aligns exactly with the GPS coordinate.
-                if (_selectedLocation != null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _selectedLocation!,
-                        width: 40,
-                        height: 48,
-                        alignment: Alignment.bottomCenter,
-                        child: const Icon(
-                          Icons.location_pin,
-                          color: Colors.red,
-                          size: 40,
+              // Selected location pin — tip aligned to GPS coordinate
+              if (_selectedLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _selectedLocation!,
+                      width: 40,
+                      height: 48,
+                      alignment: Alignment.bottomCenter,
+                      child: const Icon(
+                        Icons.location_pin,
+                        color: Colors.red,
+                        size: 40,
+                      ),
+                    ),
+                  ],
+                ),
+
+              // Current location dot — centred on GPS coordinate
+              if (_currentLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _currentLocation!,
+                      width: 20,
+                      height: 20,
+                      alignment: Alignment.center,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 2),
+                          boxShadow: const [
+                            BoxShadow(
+                                color: Colors.black26, blurRadius: 4),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-
-                // Current location dot — centred exactly on GPS coordinate
-                if (_currentLocation != null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _currentLocation!,
-                        width: 20,
-                        height: 20,
-                        alignment: Alignment.center,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black26,
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
+                    ),
+                  ],
+                ),
+            ],
           ),
         ),
 
@@ -998,15 +972,19 @@ class _StatusBanner extends StatelessWidget {
               height: 14,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
+          if (!isError) const SizedBox(width: 8),
           if (isError)
-            Icon(Icons.error_outline, size: 16, color: Colors.red.shade700),
-          const SizedBox(width: 8),
+            Icon(Icons.error_outline,
+                color: Colors.red.shade700, size: 16),
+          if (isError) const SizedBox(width: 8),
           Expanded(
             child: Text(
               isError ? (errorText ?? 'An error occurred') : text,
               style: TextStyle(
                 fontSize: 12,
-                color: isError ? Colors.red.shade700 : Colors.blue.shade800,
+                color: isError
+                    ? Colors.red.shade700
+                    : Colors.blue.shade700,
               ),
             ),
           ),
@@ -1021,21 +999,22 @@ class _CacheInfoChip extends StatelessWidget {
   final int overlayCount;
   final VoidCallback onRefresh;
 
-  const _CacheInfoChip(
-      {required this.info,
-      required this.overlayCount,
-      required this.onRefresh});
+  const _CacheInfoChip({
+    required this.info,
+    required this.overlayCount,
+    required this.onRefresh,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(8),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
+          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))
         ],
       ),
       child: Row(
@@ -1045,12 +1024,14 @@ class _CacheInfoChip extends StatelessWidget {
           Expanded(
             child: Text(
               '$info | overlays:$overlayCount',
-              style: const TextStyle(fontSize: 12),
+              style: const TextStyle(fontSize: 13),
             ),
           ),
-          GestureDetector(
-            onTap: onRefresh,
-            child: Icon(Icons.refresh, size: 18, color: Colors.grey.shade600),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            onPressed: onRefresh,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
           ),
         ],
       ),
@@ -1063,50 +1044,40 @@ class _MapControls extends StatelessWidget {
   final bool isSyncing;
   final int polygonCount;
 
-  const _MapControls(
-      {required this.onMyLocation,
-      required this.isSyncing,
-      required this.polygonCount});
+  const _MapControls({
+    required this.onMyLocation,
+    required this.isSyncing,
+    required this.polygonCount,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, -2)),
-        ],
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: Text(
-              polygonCount > 0
-                  ? '$polygonCount buildings loaded'
-                  : 'No buildings loaded',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-              ),
+          Text(
+            isSyncing
+                ? 'Syncing...'
+                : '$polygonCount buildings loaded',
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade600,
             ),
           ),
           ElevatedButton.icon(
-            onPressed: isSyncing ? null : onMyLocation,
-            icon: isSyncing
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.my_location, size: 16),
-            label: Text(isSyncing ? 'Syncing...' : 'My Location'),
+            onPressed: onMyLocation,
+            icon: const Icon(Icons.my_location, size: 18),
+            label: const Text('My Location'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green.shade700,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              textStyle: const TextStyle(fontSize: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
           ),
         ],
@@ -1126,71 +1097,90 @@ class _BuildingInfoSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
+      margin: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4))
+        ],
       ),
-      padding: const EdgeInsets.all(20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
+          // Handle bar
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Building ${polygon.buildingId}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          if (polygon.address != null) ...[
-            const SizedBox(height: 8),
-            Row(
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    polygon.address!,
-                    style: TextStyle(color: Colors.grey.shade700),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.domain,
+                          color: Colors.green.shade700, size: 28),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            polygon.buildingId,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (polygon.address != null &&
+                              polygon.address!.isNotEmpty)
+                            Text(
+                              polygon.address!,
+                              style: TextStyle(
+                                  fontSize: 13, color: Colors.grey.shade600),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: onSelect,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'SELECT THIS BUILDING',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
               ],
             ),
-          ],
-          if (polygon.zone != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.map, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Text('Zone: ${polygon.zone}',
-                    style: TextStyle(color: Colors.grey.shade700)),
-              ],
-            ),
-          ],
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: onSelect,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green.shade700,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-              child: const Text('SELECT THIS BUILDING',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
           ),
-          const SizedBox(height: 8),
         ],
       ),
     );
