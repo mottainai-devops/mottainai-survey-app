@@ -94,11 +94,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   final PolygonCacheService _polygonService = PolygonCacheService();
   final ApiService _apiService = ApiService();
 
-  // flutter_map v7 hit notifier
-  final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
-
-  static const double _radiusKm = 1.0;
-  // Labels appear at zoom 15.0+ (lower threshold so they're visible sooner)
+  // FIX 3: Increased radius from 1.0 km to 5.0 km to match v3.2.4
+  static const double _radiusKm = 5.0;
+  // FIX 5: Labels appear at zoom 15.0+
   static const double _labelZoomThreshold = 15.0;
   static const int _maxVisiblePolygons = 80;
 
@@ -121,14 +119,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   // Customer names — fetched in parallel after initial render
   Map<String, String> _customerNames = {};
 
-  // Raw polygon list (for tap lookup)
+  // Raw polygon list (for tap lookup via ray-casting)
   List<BuildingPolygon> _cachedPolygons = [];
   BuildingPolygon? _selectedPolygon;
   String? _cacheInfo;
 
   // Camera state
   LatLngBounds? _currentBounds;
-  double _currentZoom = 17.5;
+  double _currentZoom = 18.5;
   Timer? _cullingDebounce;
 
   @override
@@ -140,7 +138,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   @override
   void dispose() {
     _cullingDebounce?.cancel();
-    _polygonHitNotifier.dispose();
     super.dispose();
   }
 
@@ -196,7 +193,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       // Move map to user location
       if (_mapReady) {
-        _mapController.move(currentLoc, 16.0);
+        // FIX 4: Zoom to 18.5 (same as v3.2.4)
+        _mapController.move(currentLoc, 18.5);
       }
 
       await _startPhase2_LoadCache();
@@ -458,11 +456,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       final isCaptured = _customerNames.containsKey(pd.buildingId);
       final polygonColor = _getPolygonColor(pd.buildingId);
 
+      // FIX 1: No hitValue needed — tap detection uses ray-casting, not hitNotifier
       visiblePolygons.add(Polygon(
         points: pd.points,
-        hitValue: pd.buildingId,
-        // Polygon styling: thick border (4px) + semi-opaque fill (0.45)
-        // so outlines are clearly visible against satellite imagery.
         color: isSelected
             ? Colors.blue.withValues(alpha: 0.55)
             : isCaptured
@@ -477,78 +473,73 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       ));
 
       if (showLabels) {
-        // Building ID label — non-interactive, shadow-backed
-        visibleMarkers.add(Marker(
-          point: pd.center,
-          width: 90,
-          height: 18,
-          child: IgnorePointer(
-            child: Text(
-              pd.buildingId,
-              style: TextStyle(
-                color: isCaptured
-                    ? Colors.green.shade900
-                    : Colors.blue.shade900,
-                fontSize: 7,
-                fontWeight: FontWeight.bold,
-                shadows: const [
-                  Shadow(color: Colors.white, blurRadius: 4),
-                  Shadow(
-                      color: Colors.white,
-                      blurRadius: 4,
-                      offset: Offset(1, 1)),
-                  Shadow(
-                      color: Colors.white,
-                      blurRadius: 4,
-                      offset: Offset(-1, -1)),
-                ],
-              ),
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-          ),
-        ));
+        // FIX 5: Larger coloured label container (matches v3.2.4 style)
+        // FIX 2: GestureDetector with deferToChild (not opaque) — only fires on visible content
+        final hasCustomers = isCaptured;
+        final labelText = hasCustomers
+            ? '${pd.buildingId}\n${_customerNames[pd.buildingId]!}'
+            : pd.buildingId;
+        final labelColor = hasCustomers
+            ? Colors.green.shade700
+            : Colors.blue.shade700;
 
-        // Business name badge — only for captured buildings
-        if (isCaptured) {
-          final businessName = _customerNames[pd.buildingId]!;
+        final buildingPolygon = _cachedPolygons
+            .where((p) => p.buildingId == pd.buildingId)
+            .firstOrNull;
+
+        if (buildingPolygon != null) {
           visibleMarkers.add(Marker(
-            point: LatLng(pd.center.latitude + 0.00005, pd.center.longitude),
-            width: 120,
-            height: 22,
+            point: pd.center,
+            width: hasCustomers ? 140 : 120,
+            height: 36,
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              // FIX 2: deferToChild — only fires when tapping the visible container,
+              // not the transparent bounding box area around it.
+              behavior: HitTestBehavior.deferToChild,
               onTap: () {
-                final match = _cachedPolygons
-                    .where((p) => p.buildingId == pd.buildingId)
-                    .firstOrNull;
-                if (match != null) _showExistingCustomersDialog(match);
+                // FIX 2: Dual-path logic from v3.2.4:
+                // captured buildings → show existing customers dialog
+                // empty buildings → select directly (show building info popup)
+                if (hasCustomers) {
+                  _showExistingCustomersDialog(buildingPolygon);
+                } else {
+                  _selectPolygonDirectly(buildingPolygon);
+                }
               },
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.green.shade700.withValues(alpha: 0.92),
-                  borderRadius: BorderRadius.circular(3),
-                  border: Border.all(color: Colors.white, width: 1),
-                  boxShadow: const [
+                  color: labelColor,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
                     BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 2,
-                        offset: Offset(0, 1)),
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
                   ],
                 ),
-                child: Text(
-                  businessName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 7,
-                    fontWeight: FontWeight.bold,
+                child: Center(
+                  child: Text(
+                    labelText,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                          offset: Offset(1, 1),
+                          blurRadius: 3,
+                          color: Colors.black,
+                        ),
+                      ],
+                    ),
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
                   ),
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
               ),
             ),
@@ -620,7 +611,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       widget.onLocationSelected(
           locationData.latitude!, locationData.longitude!);
-      _mapController.move(_currentLocation!, 17.5);
+      // FIX 4: Use zoom 18.5
+      _mapController.move(_currentLocation!, 18.5);
 
       await _startPhase2_LoadCache();
     } catch (e) {
@@ -633,6 +625,39 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         );
       }
     }
+  }
+
+  // ─── FIX 1: Ray-casting tap detection (from v3.2.4) ─────────────────────────
+  // This approach is completely independent of flutter_map's hitNotifier system.
+  // It iterates all visible polygon data and checks if the tapped point falls
+  // inside any polygon using the ray-casting algorithm.
+
+  BuildingPolygon? _findPolygonAtPoint(LatLng tapPoint) {
+    for (final pd in _allPolygonData) {
+      if (_isPointInPolygon(tapPoint, pd.points)) {
+        return _cachedPolygons
+            .where((p) => p.buildingId == pd.buildingId)
+            .firstOrNull;
+      }
+    }
+    return null;
+  }
+
+  bool _isPointInPolygon(LatLng point, List<LatLng> polygon) {
+    bool inside = false;
+    int j = polygon.length - 1;
+    for (int i = 0; i < polygon.length; i++) {
+      final xi = polygon[i].longitude;
+      final yi = polygon[i].latitude;
+      final xj = polygon[j].longitude;
+      final yj = polygon[j].latitude;
+
+      final intersect = ((yi > point.latitude) != (yj > point.latitude)) &&
+          (point.longitude < (xj - xi) * (point.latitude - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+      j = i;
+    }
+    return inside;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -669,6 +694,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   }
 
   // ─── Dialogs ─────────────────────────────────────────────────────────────────
+
+  /// Called when tapping an empty (uncaptured) building label or polygon.
+  /// Directly selects the building and shows the info popup.
+  void _selectPolygonDirectly(BuildingPolygon polygon) {
+    if (!mounted) return;
+    setState(() {
+      _selectedPolygon = polygon;
+      _selectedLocation = LatLng(polygon.centerLat, polygon.centerLon);
+    });
+    _renderPolygons(useBoundsFilter: _currentBounds != null);
+    widget.onLocationSelected(polygon.centerLat, polygon.centerLon);
+    _showBuildingInfoPopup(polygon);
+  }
 
   void _showBuildingInfoPopup(BuildingPolygon polygon) {
     if (!mounted) return;
@@ -819,24 +857,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     widget.initialLat ?? 6.5244,
                     widget.initialLon ?? 3.3792,
                   ),
-              initialZoom: 17.5,
-              // MapOptions.onTap is ALWAYS invoked regardless of layers.
-              // We check _polygonHitNotifier.value here to detect polygon taps.
-              // If a polygon was hit, show the building info popup.
-              // If no polygon was hit, treat as an empty-space tap (set pin).
+              // FIX 4: Initial zoom 18.5 (same as v3.2.4 — closer view, easier taps)
+              initialZoom: 18.5,
+              // FIX 1: Use ray-casting to find polygon at tap point.
+              // This is completely independent of flutter_map's hitNotifier system
+              // and works reliably regardless of layer ordering.
               onTap: (tapPosition, latlng) {
                 if (!mounted) return;
-                final hitResult = _polygonHitNotifier.value;
-                if (hitResult != null && hitResult.hitValues.isNotEmpty) {
-                  // Polygon tap — show building info
-                  final buildingId = hitResult.hitValues.first;
-                  final match = _cachedPolygons
-                      .where((p) => p.buildingId == buildingId)
-                      .firstOrNull;
-                  if (match != null) {
-                    _showBuildingInfoPopup(match);
-                    return;
-                  }
+                // Try ray-casting first
+                final polygon = _findPolygonAtPoint(latlng);
+                if (polygon != null) {
+                  // Polygon tap — check for existing customers first
+                  _showExistingCustomersDialog(polygon);
+                  return;
                 }
                 // Empty-space tap — set location pin
                 setState(() {
@@ -849,7 +882,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 _mapReady = true;
                 // If location was obtained before map was ready, move now
                 if (_pendingCenter != null) {
-                  _mapController.move(_pendingCenter!, 16.0);
+                  // FIX 4: Use zoom 18.5
+                  _mapController.move(_pendingCenter!, 18.5);
                   _pendingCenter = null;
                 }
                 // Re-render with bounds now that map is ready
@@ -881,68 +915,60 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 panBuffer: 0,
               ),
 
-              // Polygon layer with hit testing.
-              // hitNotifier is populated by flutter_map's hit testing before
-              // MapOptions.onTap fires. We read it in onTap above.
+              // FIX 1: Plain PolygonLayer — no hitNotifier needed.
+              // Tap detection is handled by ray-casting in MapOptions.onTap.
               PolygonLayer(
                 polygons: _visiblePolygons,
-                hitNotifier: _polygonHitNotifier,
               ),
 
-              // Label markers (building IDs + business name badges).
-              // Wrapped in TranslucentPointer so marker hit tests don't
-              // block polygon hit tests on the layer below.
-              TranslucentPointer(
-                child: MarkerLayer(markers: _visibleMarkers),
-              ),
+              // FIX 2: Label markers — plain MarkerLayer (no TranslucentPointer).
+              // Each label has its own GestureDetector with deferToChild behavior.
+              // Tapping a label fires the label's onTap directly.
+              // Tapping empty space (between labels) falls through to MapOptions.onTap
+              // which runs ray-casting to find the polygon.
+              MarkerLayer(markers: _visibleMarkers),
 
               // Selected location pin — tip aligned to GPS coordinate.
-              // TranslucentPointer: lets polygon hit tests pass through.
               if (_selectedLocation != null)
-                TranslucentPointer(
-                  child: MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _selectedLocation!,
-                        width: 40,
-                        height: 48,
-                        alignment: Alignment.bottomCenter,
-                        child: const Icon(
-                          Icons.location_pin,
-                          color: Colors.red,
-                          size: 40,
-                        ),
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _selectedLocation!,
+                      width: 40,
+                      height: 48,
+                      alignment: Alignment.bottomCenter,
+                      child: const Icon(
+                        Icons.location_pin,
+                        color: Colors.red,
+                        size: 40,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
 
               // Current location dot — centred on GPS coordinate.
-              // TranslucentPointer: lets polygon hit tests pass through.
               if (_currentLocation != null)
-                TranslucentPointer(
-                  child: MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _currentLocation!,
-                        width: 20,
-                        height: 20,
-                        alignment: Alignment.center,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.blue,
-                            shape: BoxShape.circle,
-                            border:
-                                Border.all(color: Colors.white, width: 2),
-                            boxShadow: const [
-                              BoxShadow(
-                                  color: Colors.black26, blurRadius: 4),
-                            ],
-                          ),
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _currentLocation!,
+                      width: 20,
+                      height: 20,
+                      alignment: Alignment.center,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.white, width: 2),
+                          boxShadow: const [
+                            BoxShadow(
+                                color: Colors.black26, blurRadius: 4),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
             ],
           ),
