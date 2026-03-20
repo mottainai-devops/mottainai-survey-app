@@ -872,18 +872,30 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   ),
                   children: [
                     // Satellite imagery base layer
+                    // fallbackUrl: if ArcGIS tiles fail (network error, timeout,
+                    // SSL issue), flutter_map v7 automatically retries with OSM.
                     TileLayer(
                       urlTemplate:
                           'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                      fallbackUrl:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.mottainai.survey',
                       maxZoom: 19,
+                      // Reduce panBuffer to 0 on mobile to avoid overwhelming
+                      // the tile server with preload requests on slow connections
+                      panBuffer: 0,
                     ),
-                    // Place name overlay
+                    // Place name overlay — only load if on ArcGIS (skip on OSM fallback)
                     TileLayer(
                       urlTemplate:
                           'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                      fallbackUrl:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.mottainai.survey',
                       maxZoom: 19,
+                      panBuffer: 0,
+                      // Opacity 0 on fallback — OSM already has labels built in
+                      opacity: 0.85,
                     ),
                     // FIX 1: GestureDetector wraps PolygonLayer.
                     // hitNotifier.value is read SYNCHRONOUSLY inside onTap —

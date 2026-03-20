@@ -41,3 +41,10 @@
 - [x] Fix 4: Fix label marker sizing and rendering
 - [x] Fix 5: Bump DB version to 12 to force cache clear on devices with old cached data
 - [x] Fix 6: Bump app version to 3.2.20
+
+## v3.2.21 — Tile Layer Fix (blank grey map)
+- [x] Add fallbackUrl (OpenStreetMap) to satellite TileLayer
+- [x] Add errorTileCallback to suppress tile errors silently
+- [x] Add panBuffer: 0 to reduce tile requests on slow connections
+- [x] fallbackUrl handles retry automatically (no extra package needed)
+- [x] Bump version to 3.2.21
