@@ -98,7 +98,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   final LayerHitNotifier<String> _polygonHitNotifier = ValueNotifier(null);
 
   static const double _radiusKm = 1.0;
-  static const double _labelZoomThreshold = 15.5;
+  // Labels appear at zoom 15.0+ (lower threshold so they're visible sooner)
+  static const double _labelZoomThreshold = 15.0;
   static const int _maxVisiblePolygons = 80;
 
   LatLng? _selectedLocation;
@@ -127,7 +128,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   // Camera state
   LatLngBounds? _currentBounds;
-  double _currentZoom = 16.0;
+  double _currentZoom = 17.5;
   Timer? _cullingDebounce;
 
   @override
@@ -460,19 +461,19 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       visiblePolygons.add(Polygon(
         points: pd.points,
         hitValue: pd.buildingId,
-        // Increased fill opacity (0.35) and border width (3.0) so polygons
-        // are clearly visible against satellite imagery.
+        // Polygon styling: thick border (4px) + semi-opaque fill (0.45)
+        // so outlines are clearly visible against satellite imagery.
         color: isSelected
             ? Colors.blue.withValues(alpha: 0.55)
             : isCaptured
                 ? Colors.green.withValues(alpha: 0.45)
-                : polygonColor.withValues(alpha: 0.35),
+                : polygonColor.withValues(alpha: 0.40),
         borderColor: isSelected
             ? Colors.blue
             : isCaptured
                 ? Colors.green.shade700
                 : polygonColor,
-        borderStrokeWidth: isSelected ? 5.0 : 3.0,
+        borderStrokeWidth: isSelected ? 5.0 : 4.0,
       ));
 
       if (showLabels) {
@@ -619,7 +620,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       widget.onLocationSelected(
           locationData.latitude!, locationData.longitude!);
-      _mapController.move(_currentLocation!, 16.0);
+      _mapController.move(_currentLocation!, 17.5);
 
       await _startPhase2_LoadCache();
     } catch (e) {
@@ -818,7 +819,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     widget.initialLat ?? 6.5244,
                     widget.initialLon ?? 3.3792,
                   ),
-              initialZoom: 16.0,
+              initialZoom: 17.5,
               // Empty-space tap handler.
               // Polygon taps are handled by the GestureDetector wrapping
               // PolygonLayer in the children list below.
@@ -937,32 +938,6 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             ],
           ),
         ),
-
-        // DEBUG OVERLAY — shows first polygon coordinates to diagnose
-        // coordinate system issues. Remove after diagnosis is complete.
-        if (_allPolygonData.isNotEmpty)
-          Container(
-            color: Colors.black87,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Text(
-              () {
-                final first = _allPolygonData.first;
-                final pt0 = first.points.isNotEmpty ? first.points[0] : null;
-                final userLat = _currentLocation?.latitude;
-                final userLon = _currentLocation?.longitude;
-                return 'GPS: ${userLat?.toStringAsFixed(5)},${userLon?.toStringAsFixed(5)} | '
-                    'P0 center: ${first.center.latitude.toStringAsFixed(5)},${first.center.longitude.toStringAsFixed(5)} | '
-                    'P0 pt[0]: ${pt0?.latitude.toStringAsFixed(5)},${pt0?.longitude.toStringAsFixed(5)} | '
-                    'total:${_allPolygonData.length} vis:${_visiblePolygons.length}';
-              }(),
-              style: const TextStyle(
-                color: Colors.yellow,
-                fontSize: 9,
-                fontFamily: 'monospace',
-              ),
-              maxLines: 3,
-            ),
-          ),
 
         // Bottom controls
         _MapControls(
