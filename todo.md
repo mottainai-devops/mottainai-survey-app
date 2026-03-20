@@ -48,3 +48,9 @@
 - [x] Add panBuffer: 0 to reduce tile requests on slow connections
 - [x] fallbackUrl handles retry automatically (no extra package needed)
 - [x] Bump version to 3.2.21
+
+## v3.2.22 — Map Layout Fix (blank grey, infinite scroll)
+- [x] Found: EnhancedLocationMap inside ListView with no height constraint
+- [x] Wrapped in SizedBox(height: MediaQuery * 0.45) in pickup_form_screen_v2.dart
+- [x] Root cause was ListView giving unbounded height — fixed with SizedBox
+- [x] Bump version to 3.2.22
