@@ -240,7 +240,7 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 1.0,
+    double radiusKm = 5.0,
   }) async {
     final db = await instance.database;
 

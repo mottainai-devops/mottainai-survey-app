@@ -23,9 +23,8 @@ class ArcGISService {
   ///
   /// [lat] and [lon] are the center coordinates (WGS84).
   /// [radiusKm] is the search radius in kilometers.
-  ///   Default is 1.0km — the dataset has 1.5M features so a large
-  ///   radius returns thousands of polygons and causes connection aborts on
-  ///   mobile networks. Increase only when on a fast connection.
+  ///   Default is 5.0km — loads all buildings in the survey area.
+  ///   Results are paginated ([_pageSize] per page) to avoid oversized responses.
   ///
   /// [onProgress] optional callback called after each page with the running total.
   ///
@@ -33,7 +32,7 @@ class ArcGISService {
   Future<List<BuildingPolygon>> fetchPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 1.0,
+    double radiusKm = 5.0,
     void Function(int fetched)? onProgress,
   }) async {
     final radiusMeters = (radiusKm * 1000).round();

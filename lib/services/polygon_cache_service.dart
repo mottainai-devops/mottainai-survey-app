@@ -7,11 +7,11 @@ class PolygonCacheService {
   final ArcGISService _arcgisService = ArcGISService();
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  /// Sync polygons for current location (1km radius by default)
+  /// Sync polygons for current location (5km radius by default)
   Future<PolygonSyncResult> syncPolygonsForLocation({
     required double lat,
     required double lon,
-    double radiusKm = 1.0,
+    double radiusKm = 5.0,
     void Function(int fetched)? onProgress,
   }) async {
     try {
@@ -63,7 +63,7 @@ class PolygonCacheService {
   Future<List<BuildingPolygon>> getCachedPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 1.0,
+    double radiusKm = 5.0,
   }) async {
     try {
       final polygonMaps = await _dbHelper.getPolygonsNearLocation(

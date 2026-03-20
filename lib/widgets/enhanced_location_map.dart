@@ -37,8 +37,9 @@ List<Map<String, dynamic>> _decodePolygonsInIsolate(
         if (coord is! List || coord.length < 2) continue;
         final lat = (coord[1] as num).toDouble();
         final lon = (coord[0] as num).toDouble();
-        // Sanity check: valid WGS84 coordinates for Nigeria
-        if (lat < 4.0 || lat > 14.0 || lon < 2.0 || lon > 15.0) continue;
+        // Sanity check: valid WGS84 coordinates (broad check — reject obvious Web Mercator values)
+        // Web Mercator x/y values are in the hundreds of thousands; WGS84 lat/lon are -180..180
+        if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) continue;
         points.add([lat, lon]);
         sumLat += lat;
         sumLon += lon;
@@ -603,16 +604,39 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       final locationData = await location.getLocation();
 
       if (!mounted) return;
+      final currentLoc =
+          LatLng(locationData.latitude!, locationData.longitude!);
+
       setState(() {
-        _currentLocation =
-            LatLng(locationData.latitude!, locationData.longitude!);
-        _selectedLocation = _currentLocation;
+        _currentLocation = currentLoc;
+        _selectedLocation = currentLoc;
       });
 
       widget.onLocationSelected(
           locationData.latitude!, locationData.longitude!);
-      // FIX 4: Use zoom 18.5
-      _mapController.move(_currentLocation!, 18.5);
+      _mapController.move(currentLoc, 18.5);
+
+      // Snap-to-nearest: if a polygon is within 50m, auto-select it
+      final nearest = _findNearestPolygon(currentLoc, maxDistanceMetres: 50.0);
+      if (nearest != null && mounted) {
+        setState(() {
+          _selectedPolygon = nearest;
+          _selectedLocation =
+              LatLng(nearest.centerLat, nearest.centerLon);
+        });
+        widget.onLocationSelected(nearest.centerLat, nearest.centerLon);
+        _renderPolygons(useBoundsFilter: _currentBounds != null);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'Snapped to nearest building: ${nearest.buildingId}'),
+              backgroundColor: Colors.blue.shade700,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
 
       await _startPhase2_LoadCache();
     } catch (e) {
@@ -633,6 +657,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   // inside any polygon using the ray-casting algorithm.
 
   BuildingPolygon? _findPolygonAtPoint(LatLng tapPoint) {
+    // Primary: search pre-decoded _allPolygonData (fast LatLng list)
     for (final pd in _allPolygonData) {
       if (_isPointInPolygon(tapPoint, pd.points)) {
         return _cachedPolygons
@@ -640,7 +665,48 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             .firstOrNull;
       }
     }
+    // Fallback: search _cachedPolygons directly by decoding geometry inline
+    // (handles the case where _allPolygonData is empty but cache is populated)
+    for (final polygon in _cachedPolygons) {
+      try {
+        final geo = jsonDecode(polygon.geometry) as Map<String, dynamic>;
+        final rings = geo['rings'] as List?;
+        if (rings == null || rings.isEmpty) continue;
+        final ring = rings[0] as List;
+        final points = <LatLng>[];
+        for (final coord in ring) {
+          if (coord is! List || coord.length < 2) continue;
+          final lat = (coord[1] as num).toDouble();
+          final lon = (coord[0] as num).toDouble();
+          points.add(LatLng(lat, lon));
+        }
+        if (points.length >= 3 && _isPointInPolygon(tapPoint, points)) {
+          return polygon;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
     return null;
+  }
+
+  /// Find the nearest polygon to a given point within maxDistanceMetres.
+  /// Used for snap-to-nearest on "My Location" tap.
+  BuildingPolygon? _findNearestPolygon(LatLng point,
+      {double maxDistanceMetres = 50.0}) {
+    BuildingPolygon? nearest;
+    double nearestDist = double.infinity;
+
+    for (final polygon in _cachedPolygons) {
+      final dist = _distanceMetres(
+          point.latitude, point.longitude,
+          polygon.centerLat, polygon.centerLon);
+      if (dist < nearestDist && dist <= maxDistanceMetres) {
+        nearestDist = dist;
+        nearest = polygon;
+      }
+    }
+    return nearest;
   }
 
   bool _isPointInPolygon(LatLng point, List<LatLng> polygon) {
@@ -847,130 +913,123 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             onRefresh: _getCurrentLocation,
           ),
 
-        // Map — always rendered immediately
-        Expanded(
-          child: FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _currentLocation ??
-                  LatLng(
-                    widget.initialLat ?? 6.5244,
-                    widget.initialLon ?? 3.3792,
-                  ),
-              // FIX 4: Initial zoom 18.5 (same as v3.2.4 — closer view, easier taps)
-              initialZoom: 18.5,
-              // FIX 1: Use ray-casting to find polygon at tap point.
-              // This is completely independent of flutter_map's hitNotifier system
-              // and works reliably regardless of layer ordering.
-              onTap: (tapPosition, latlng) {
-                if (!mounted) return;
-                // Try ray-casting first
-                final polygon = _findPolygonAtPoint(latlng);
-                if (polygon != null) {
-                  // Polygon tap — check for existing customers first
-                  _showExistingCustomersDialog(polygon);
-                  return;
-                }
-                // Empty-space tap — set location pin
-                setState(() {
-                  _selectedLocation = latlng;
-                  _selectedPolygon = null;
-                });
-                widget.onLocationSelected(latlng.latitude, latlng.longitude);
-              },
-              onMapReady: () {
-                _mapReady = true;
-                // If location was obtained before map was ready, move now
-                if (_pendingCenter != null) {
-                  // FIX 4: Use zoom 18.5
-                  _mapController.move(_pendingCenter!, 18.5);
-                  _pendingCenter = null;
-                }
-                // Re-render with bounds now that map is ready
-                if (_allPolygonData.isNotEmpty) {
-                  _renderPolygons(useBoundsFilter: false);
-                }
-              },
-              onPositionChanged: (camera, hasGesture) {
-                _currentBounds = camera.visibleBounds;
-                _currentZoom = camera.zoom;
-                // Debounce culling: 250ms after last camera move
-                if (_allPolygonData.isNotEmpty) {
-                  _cullingDebounce?.cancel();
-                  _cullingDebounce = Timer(
-                    const Duration(milliseconds: 250),
-                    () => _renderPolygons(useBoundsFilter: true),
-                  );
-                }
-              },
-            ),
-            children: [
-              // Satellite tiles with OSM fallback
-              TileLayer(
-                urlTemplate:
-                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                fallbackUrl:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.mottainai.mottainai_survey',
-                panBuffer: 0,
-              ),
-
-              // FIX 1: Plain PolygonLayer — no hitNotifier needed.
-              // Tap detection is handled by ray-casting in MapOptions.onTap.
-              PolygonLayer(
-                polygons: _visiblePolygons,
-              ),
-
-              // FIX 2: Label markers — plain MarkerLayer (no TranslucentPointer).
-              // Each label has its own GestureDetector with deferToChild behavior.
-              // Tapping a label fires the label's onTap directly.
-              // Tapping empty space (between labels) falls through to MapOptions.onTap
-              // which runs ray-casting to find the polygon.
-              MarkerLayer(markers: _visibleMarkers),
-
-              // Selected location pin — tip aligned to GPS coordinate.
-              if (_selectedLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _selectedLocation!,
-                      width: 40,
-                      height: 48,
-                      alignment: Alignment.bottomCenter,
-                      child: const Icon(
-                        Icons.location_pin,
-                        color: Colors.red,
-                        size: 40,
-                      ),
+        // Map — fixed 400px height (matches v3.2.4 — avoids Expanded hit-test issues)
+        Container(
+          height: 400,
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _currentLocation ??
+                    LatLng(
+                      widget.initialLat ?? 6.5244,
+                      widget.initialLon ?? 3.3792,
                     ),
-                  ],
+                initialZoom: 18.5,
+                onTap: (tapPosition, latlng) {
+                  if (!mounted) return;
+                  final polygon = _findPolygonAtPoint(latlng);
+                  if (polygon != null) {
+                    _showExistingCustomersDialog(polygon);
+                    return;
+                  }
+                  setState(() {
+                    _selectedLocation = latlng;
+                    _selectedPolygon = null;
+                  });
+                  widget.onLocationSelected(latlng.latitude, latlng.longitude);
+                },
+                onMapReady: () {
+                  _mapReady = true;
+                  if (_pendingCenter != null) {
+                    _mapController.move(_pendingCenter!, 18.5);
+                    _pendingCenter = null;
+                  }
+                  if (_allPolygonData.isNotEmpty) {
+                    _renderPolygons(useBoundsFilter: false);
+                  }
+                },
+                onPositionChanged: (camera, hasGesture) {
+                  _currentBounds = camera.visibleBounds;
+                  _currentZoom = camera.zoom;
+                  if (_allPolygonData.isNotEmpty) {
+                    _cullingDebounce?.cancel();
+                    _cullingDebounce = Timer(
+                      const Duration(milliseconds: 250),
+                      () => _renderPolygons(useBoundsFilter: true),
+                    );
+                  }
+                },
+              ),
+              children: <Widget>[
+                // Satellite imagery — no OSM fallback (wrong map type would misalign polygons)
+                TileLayer(
+                  urlTemplate:
+                      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                  userAgentPackageName: 'com.mottainai.mottainai_survey',
+                  maxZoom: 19,
+                  panBuffer: 0,
                 ),
-
-              // Current location dot — centred on GPS coordinate.
-              if (_currentLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _currentLocation!,
-                      width: 20,
-                      height: 20,
-                      alignment: Alignment.center,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.blue,
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: Colors.white, width: 2),
-                          boxShadow: const [
-                            BoxShadow(
-                                color: Colors.black26, blurRadius: 4),
-                          ],
+                // Reference overlay: street names + place labels on top of satellite
+                TileLayer(
+                  urlTemplate:
+                      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                  userAgentPackageName: 'com.mottainai.mottainai_survey',
+                  maxZoom: 19,
+                  panBuffer: 0,
+                ),
+                // Plain PolygonLayer — tap detection via ray-casting in MapOptions.onTap
+                PolygonLayer(
+                  polygons: _visiblePolygons,
+                ),
+                // Label markers
+                MarkerLayer(markers: _visibleMarkers),
+                // Selected location pin
+                if (_selectedLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _selectedLocation!,
+                        width: 40,
+                        height: 48,
+                        alignment: Alignment.bottomCenter,
+                        child: const Icon(
+                          Icons.location_pin,
+                          color: Colors.red,
+                          size: 40,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-            ],
+                    ],
+                  ),
+                // Current location dot
+                if (_currentLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _currentLocation!,
+                        width: 20,
+                        height: 20,
+                        alignment: Alignment.center,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 4),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ),
 
