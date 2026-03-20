@@ -12,16 +12,67 @@ import '../services/polygon_cache_service.dart';
 import '../services/api_service.dart';
 
 // ─── Isolate helper: decode all polygon geometries off the UI thread ──────────
-// This is the single biggest crash cause: jsonDecode on 1000 geometries in
-// setState() blocks the UI thread for 2–5 seconds on low-end devices → ANR.
-// compute() runs this in a separate Dart isolate.
+// compute() ONLY supports plain Dart types across isolate boundaries:
+// primitives, List, Map, SendPort. Custom class instances (like LatLng or
+// _PolygonRenderData) are NOT supported and cause a crash.
+// Solution: the isolate returns List<Map<String,dynamic>> with only primitive
+// values (doubles, strings, lists of doubles). LatLng objects are constructed
+// on the main thread after compute() returns — that part is cheap.
 
-class _OverlayData {
-  final List<_PolygonRenderData> polygons;
-  final List<_LabelData> labels;
-  const _OverlayData({required this.polygons, required this.labels});
+// Input: list of {buildingId: String, geometry: String}
+// Output: list of {
+//   buildingId: String,
+//   points: List<List<double>>,  // [[lat,lon], ...]
+//   centerLat: double,
+//   centerLon: double,
+// }
+List<Map<String, dynamic>> _decodePolygonsInIsolate(
+    List<Map<String, dynamic>> input) {
+  final result = <Map<String, dynamic>>[];
+
+  for (final map in input) {
+    try {
+      final buildingId = map['buildingId'] as String? ?? '';
+      final geometryStr = map['geometry'] as String? ?? '';
+      if (geometryStr.isEmpty || buildingId.isEmpty) continue;
+
+      final geometryJson = jsonDecode(geometryStr) as Map<String, dynamic>;
+      final rings = geometryJson['rings'] as List?;
+      if (rings == null || rings.isEmpty) continue;
+
+      final ring = rings[0] as List;
+      final points = <List<double>>[];
+      double sumLat = 0, sumLon = 0;
+
+      for (final coord in ring) {
+        if (coord is! List || coord.length < 2) continue;
+        final lat = coord[1] is int
+            ? (coord[1] as int).toDouble()
+            : (coord[1] as num).toDouble();
+        final lon = coord[0] is int
+            ? (coord[0] as int).toDouble()
+            : (coord[0] as num).toDouble();
+        points.add([lat, lon]);
+        sumLat += lat;
+        sumLon += lon;
+      }
+      if (points.length < 3) continue;
+
+      result.add({
+        'buildingId': buildingId,
+        'points': points,          // List<List<double>> — isolate-safe
+        'centerLat': sumLat / points.length,
+        'centerLon': sumLon / points.length,
+      });
+    } catch (_) {
+      // Skip bad geometry — never crash
+    }
+  }
+
+  return result;
 }
 
+// Lightweight structs used only on the main thread (after compute returns)
 class _PolygonRenderData {
   final String buildingId;
   final List<LatLng> points;
@@ -32,58 +83,6 @@ class _LabelData {
   final String buildingId;
   final LatLng center;
   const _LabelData({required this.buildingId, required this.center});
-}
-
-class _DecodeInput {
-  final List<Map<String, dynamic>> polygonMaps;
-  const _DecodeInput(this.polygonMaps);
-}
-
-// Top-level function required by compute()
-_OverlayData _decodePolygonsInIsolate(_DecodeInput input) {
-  final polygons = <_PolygonRenderData>[];
-  final labels = <_LabelData>[];
-
-  for (final map in input.polygonMaps) {
-    try {
-      final buildingId = map['buildingId'] as String? ?? '';
-      final geometryStr = map['geometry'] as String? ?? '';
-      if (geometryStr.isEmpty || buildingId.isEmpty) continue;
-
-      final geometryJson = jsonDecode(geometryStr);
-      final rings = geometryJson['rings'] as List?;
-      if (rings == null || rings.isEmpty) continue;
-
-      final ring = rings[0] as List;
-      final points = <LatLng>[];
-      for (final coord in ring) {
-        final lat = coord[1] is int
-            ? (coord[1] as int).toDouble()
-            : coord[1] as double;
-        final lon = coord[0] is int
-            ? (coord[0] as int).toDouble()
-            : coord[0] as double;
-        points.add(LatLng(lat, lon));
-      }
-      if (points.length < 3) continue;
-
-      // Compute centroid
-      double sumLat = 0, sumLon = 0;
-      for (final p in points) {
-        sumLat += p.latitude;
-        sumLon += p.longitude;
-      }
-      final center =
-          LatLng(sumLat / points.length, sumLon / points.length);
-
-      polygons.add(_PolygonRenderData(buildingId: buildingId, points: points));
-      labels.add(_LabelData(buildingId: buildingId, center: center));
-    } catch (_) {
-      // Skip bad geometry — never crash
-    }
-  }
-
-  return _OverlayData(polygons: polygons, labels: labels);
 }
 
 // ─── Main widget ──────────────────────────────────────────────────────────────
@@ -380,20 +379,48 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   Future<void> _decodeAndRenderPolygons(List<BuildingPolygon> polygons) async {
     if (!mounted) return;
 
-    // Serialize to plain maps for isolate (BuildingPolygon is not isolate-safe)
-    final maps = polygons.map((p) => {'buildingId': p.buildingId, 'geometry': p.geometry}).toList();
+    // Serialize to plain List<Map> — ONLY primitives cross isolate boundaries.
+    // compute() uses SendPort.send() which does NOT support custom class instances.
+    final inputMaps = polygons
+        .map((p) => <String, dynamic>{
+              'buildingId': p.buildingId,
+              'geometry': p.geometry,
+            })
+        .toList();
 
-    // Run JSON decoding in a separate Dart isolate — never on UI thread
-    final overlayData = await compute(
+    // Run JSON decoding in a separate Dart isolate — never on UI thread.
+    // Returns List<Map<String,dynamic>> with only primitive values.
+    final rawResults = await compute(
       _decodePolygonsInIsolate,
-      _DecodeInput(maps),
+      inputMaps,
     );
 
     if (!mounted) return;
 
+    // Reconstruct LatLng objects on the main thread — this is cheap.
+    final polygonData = <_PolygonRenderData>[];
+    final labelData = <_LabelData>[];
+
+    for (final raw in rawResults) {
+      final buildingId = raw['buildingId'] as String;
+      final rawPoints = raw['points'] as List;
+      final centerLat = raw['centerLat'] as double;
+      final centerLon = raw['centerLon'] as double;
+
+      final points = rawPoints
+          .map((p) => LatLng((p as List)[0] as double, p[1] as double))
+          .toList();
+
+      polygonData.add(_PolygonRenderData(buildingId: buildingId, points: points));
+      labelData.add(_LabelData(
+        buildingId: buildingId,
+        center: LatLng(centerLat, centerLon),
+      ));
+    }
+
     setState(() {
-      _allPolygonData = overlayData.polygons;
-      _allLabelData = overlayData.labels;
+      _allPolygonData = polygonData;
+      _allLabelData = labelData;
     });
 
     _updateVisiblePolygons();

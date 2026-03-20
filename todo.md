@@ -99,3 +99,8 @@
 - [x] Fix polygon tap detection (tapping polygon does nothing)
 - [x] Fix GPS location pin not centred precisely on user's position
 - [x] Bump version to 3.2.24
+
+## v3.2.25 — Crash Fix
+- [x] Diagnose crash source in v3.2.24 — isolate-unsafe custom classes in compute()
+- [x] Fix: return plain List<Map> from compute(), reconstruct LatLng on main thread
+- [x] Bump version to 3.2.25
