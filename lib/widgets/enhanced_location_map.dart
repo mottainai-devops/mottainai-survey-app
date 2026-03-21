@@ -118,7 +118,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
   List<Marker> _visibleMarkers = [];
 
   // Customer names — fetched in parallel after initial render
-  Map<String, String> _customerNames = {};
+  // Key = buildingId, Value = list of customer names (one per registered customer)
+  Map<String, List<String>> _customerNames = {};
 
   // Raw polygon list (for tap lookup via ray-casting)
   List<BuildingPolygon> _cachedPolygons = [];
@@ -473,78 +474,70 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         borderStrokeWidth: isSelected ? 5.0 : 4.0,
       ));
 
-      if (showLabels) {
-        // FIX 5: Larger coloured label container (matches v3.2.4 style)
-        // FIX 2: GestureDetector with deferToChild (not opaque) — only fires on visible content
-        final hasCustomers = isCaptured;
-        final labelText = hasCustomers
-            ? '${pd.buildingId}\n${_customerNames[pd.buildingId]!}'
-            : pd.buildingId;
-        final labelColor = hasCustomers
-            ? Colors.green.shade700
-            : Colors.blue.shade700;
-
+      // FIX 1+2+4: Labels show customer names only (not building ID).
+      // One chip per customer name. Label tap = view only. No label if no customer.
+      if (showLabels && isCaptured) {
+        final customerList = _customerNames[pd.buildingId] ?? [];
         final buildingPolygon = _cachedPolygons
             .where((p) => p.buildingId == pd.buildingId)
             .firstOrNull;
 
-        if (buildingPolygon != null) {
-          visibleMarkers.add(Marker(
-            point: pd.center,
-            width: hasCustomers ? 140 : 120,
-            height: 36,
-            child: GestureDetector(
-              // FIX 2: deferToChild — only fires when tapping the visible container,
-              // not the transparent bounding box area around it.
-              behavior: HitTestBehavior.deferToChild,
-              onTap: () {
-                // FIX 2: Dual-path logic from v3.2.4:
-                // captured buildings → show existing customers dialog
-                // empty buildings → select directly (show building info popup)
-                if (hasCustomers) {
-                  _showExistingCustomersDialog(buildingPolygon);
-                } else {
-                  _selectPolygonDirectly(buildingPolygon);
-                }
-              },
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: labelColor,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.white, width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
+        if (buildingPolygon != null && customerList.isNotEmpty) {
+          // Stack one marker per customer, offset vertically so they don't overlap
+          for (int ci = 0; ci < customerList.length; ci++) {
+            final customerName = customerList[ci];
+            // Offset each chip slightly downward from the polygon centre
+            final offsetLat = pd.center.latitude -
+                (ci * 0.000045); // ~5m per chip
+            final chipPoint = LatLng(offsetLat, pd.center.longitude);
+
+            visibleMarkers.add(Marker(
+              point: chipPoint,
+              width: 140,
+              height: 28,
+              child: GestureDetector(
+                // FIX 4: Label tap = VIEW ONLY (show customer list, no form fill)
+                behavior: HitTestBehavior.deferToChild,
+                onTap: () => _showExistingCustomersViewOnly(buildingPolygon),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade700,
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: Colors.white, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Text(
+                      customerName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        shadows: [
+                          Shadow(
+                            offset: Offset(1, 1),
+                            blurRadius: 2,
+                            color: Colors.black,
+                          ),
+                        ],
+                      ),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
-                  ],
-                ),
-                child: Center(
-                  child: Text(
-                    labelText,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(
-                          offset: Offset(1, 1),
-                          blurRadius: 3,
-                          color: Colors.black,
-                        ),
-                      ],
-                    ),
-                    textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
                   ),
                 ),
               ),
-            ),
-          ));
+            ));
+          }
         }
       }
     }
@@ -561,6 +554,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       List<BuildingPolygon> polygons) async {
     const callTimeout = Duration(seconds: 5);
 
+    // FIX 2: Collect ALL customer names per building (not just the first one)
     final futures = polygons.map((polygon) async {
       try {
         final result = await _apiService
@@ -569,9 +563,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         if (result['success'] == true && result['existingCustomers'] != null) {
           final customers = result['existingCustomers'] as List;
           if (customers.isNotEmpty) {
-            final name = (customers[0]['name'] as String?) ??
-                (customers[0]['label'] as String? ?? polygon.buildingId);
-            return MapEntry(polygon.buildingId, name);
+            // Extract every customer name from the list
+            final names = customers
+                .map((c) =>
+                    (c['name'] as String?) ??
+                    (c['label'] as String?) ??
+                    '')
+                .where((n) => n.isNotEmpty)
+                .toList();
+            if (names.isNotEmpty) {
+              return MapEntry(polygon.buildingId, names);
+            }
           }
         }
       } catch (_) {
@@ -583,7 +585,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     final results = await Future.wait(futures);
     if (!mounted) return;
 
-    final newNames = <String, String>{};
+    final newNames = <String, List<String>>{};
     for (final entry in results) {
       if (entry != null) newNames[entry.key] = entry.value;
     }
@@ -781,11 +783,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     });
     _renderPolygons(useBoundsFilter: _currentBounds != null);
 
-    if (widget.onBuildingSelected != null) {
-      widget.onBuildingSelected!(polygon);
-      return;
-    }
-
+    // FIX 3: Always show the bottom sheet first so the user can confirm.
+    // Only call onBuildingSelected (which fills the form) when the user
+    // explicitly taps SELECT THIS BUILDING inside the sheet.
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -794,13 +794,105 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         polygon: polygon,
         onSelect: () {
           Navigator.pop(context);
-          widget.onLocationSelected(
-            _currentLocation!.latitude,
-            _currentLocation!.longitude,
-          );
+          // Now confirm: fill the form
+          if (widget.onBuildingSelected != null) {
+            widget.onBuildingSelected!(polygon);
+          } else {
+            widget.onLocationSelected(
+              polygon.centerLat,
+              polygon.centerLon,
+            );
+          }
         },
       ),
     );
+  }
+
+  /// FIX 4: Label tap — VIEW ONLY. Shows customer list with no action buttons.
+  /// Does NOT fill the form. User must tap the polygon body to confirm selection.
+  void _showExistingCustomersViewOnly(BuildingPolygon polygon) async {
+    try {
+      final result =
+          await _apiService.getBuildingCustomers(polygon.buildingId);
+
+      if (result['success'] != true || result['existingCustomers'] == null) {
+        return;
+      }
+
+      final existingCustomers = result['existingCustomers'] as List;
+      if (existingCustomers.isEmpty) return;
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade700,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.people, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'CUSTOMERS',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                    Text(
+                      polygon.buildingId,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: existingCustomers.length,
+              itemBuilder: (context, index) {
+                final customer = existingCustomers[index];
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.green.shade100,
+                    child: Icon(Icons.person, color: Colors.green.shade700),
+                  ),
+                  title: Text(
+                    customer['name'] ?? customer['label'] ?? 'Unknown',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(customer['phone'] ?? ''),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CLOSE'),
+            ),
+          ],
+        ),
+      );
+    } catch (_) {
+      // Non-fatal — silently ignore
+    }
   }
 
   void _showExistingCustomersDialog(BuildingPolygon polygon) async {
@@ -931,11 +1023,24 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                       widget.initialLon ?? 3.3792,
                     ),
                 initialZoom: 18.5,
+                // FIX 3+4: Polygon body tap = PRIMARY action (confirm/select).
+                // Captured buildings → show existing customers dialog with ADD NEW option.
+                // Empty buildings → show building info bottom sheet with SELECT button.
+                // The form is only filled AFTER the user taps SELECT in the sheet.
                 onTap: (tapPosition, latlng) {
                   if (!mounted) return;
                   final polygon = _findPolygonAtPoint(latlng);
                   if (polygon != null) {
-                    _showExistingCustomersDialog(polygon);
+                    final hasCustomers =
+                        _customerNames.containsKey(polygon.buildingId) &&
+                        (_customerNames[polygon.buildingId]?.isNotEmpty ?? false);
+                    if (hasCustomers) {
+                      // Captured building: show customers + ADD NEW option
+                      _showExistingCustomersDialog(polygon);
+                    } else {
+                      // Empty building: show info sheet, user must tap SELECT
+                      _selectPolygonDirectly(polygon);
+                    }
                     return;
                   }
                   setState(() {
