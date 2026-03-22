@@ -350,7 +350,20 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       _allPolygonData = renderData;
     });
 
-    _renderPolygons(useBoundsFilter: _currentBounds != null);
+    // Always render without bounds filter on the initial load.
+    // _currentBounds may be set from the programmatic GPS move in onMapReady,
+    // but the bounds captured at that instant can be slightly off and cull all
+    // polygons before they have a chance to render. Rendering without filter
+    // first guarantees polygons are visible immediately; the viewport culling
+    // debounce in onPositionChanged will take over on the next user gesture.
+    _renderPolygons(useBoundsFilter: false);
+
+    // Schedule a second render after the frame so _currentBounds is stable.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _allPolygonData.isNotEmpty) {
+        _renderPolygons(useBoundsFilter: _currentBounds != null);
+      }
+    });
   }
 
   // ─── Fetch customers from ArcGIS Customer Layer ───────────────────────────────
