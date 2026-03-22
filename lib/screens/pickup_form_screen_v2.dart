@@ -430,6 +430,12 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       final pickup = PickupSubmission(
         formId: webhookUrl, // Use webhook URL as form ID for routing
         supervisorId: _supervisorIdController.text.trim(),
+        customerName: _businessNameController.text.trim().isEmpty
+            ? 'Unknown'
+            : _businessNameController.text.trim(),
+        customerPhone: _customerPhoneController.text.trim(),
+        customerEmail: _customerEmailController.text.trim(),
+        customerAddress: _customerAddressController.text.trim(),
         customerType: '$_billingType - $_customerType', // Combined billing and customer type
         binType: _binType,
         wheelieBinType: _wheelieBinType,
