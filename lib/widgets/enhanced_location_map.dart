@@ -1054,8 +1054,28 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         // Bottom controls
         _MapControls(
           onMyLocation: _getCurrentLocation,
+          onRefreshOverlays: () {
+            // Force a nudge: move map by a tiny amount and back to trigger
+            // onPositionChanged with hasGesture=false, then re-render.
+            if (_mapReady && _currentLocation != null) {
+              final loc = _currentLocation!;
+              _mapController.move(
+                  LatLng(loc.latitude + 0.000001, loc.longitude), _currentZoom);
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (mounted) {
+                  _mapController.move(loc, _currentZoom);
+                  Future.delayed(const Duration(milliseconds: 150), () {
+                    if (mounted) _renderPolygons(useBoundsFilter: false);
+                  });
+                }
+              });
+            } else {
+              _renderPolygons(useBoundsFilter: false);
+            }
+          },
           isLoading: _phase == _LoadPhase.loading,
           polygonCount: _livePolygons.length,
+          overlayCount: _visiblePolygons.length,
         ),
       ],
     );
@@ -1148,13 +1168,17 @@ class _InfoChip extends StatelessWidget {
 
 class _MapControls extends StatelessWidget {
   final VoidCallback onMyLocation;
+  final VoidCallback onRefreshOverlays;
   final bool isLoading;
   final int polygonCount;
+  final int overlayCount;
 
   const _MapControls({
     required this.onMyLocation,
+    required this.onRefreshOverlays,
     required this.isLoading,
     required this.polygonCount,
+    required this.overlayCount,
   });
 
   @override
@@ -1168,19 +1192,44 @@ class _MapControls extends StatelessWidget {
             isLoading ? 'Loading...' : '$polygonCount buildings loaded',
             style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
           ),
-          ElevatedButton.icon(
-            onPressed: onMyLocation,
-            icon: const Icon(Icons.my_location, size: 18),
-            label: const Text('My Location'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green.shade700,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Show overlays button — visible when polygons are loaded but
+              // overlays are not rendering (overlayCount == 0 && polygonCount > 0)
+              if (!isLoading && polygonCount > 0 && overlayCount == 0)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ElevatedButton.icon(
+                    onPressed: onRefreshOverlays,
+                    icon: const Icon(Icons.layers, size: 18),
+                    label: const Text('Show Overlays'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade700,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                    ),
+                  ),
+                ),
+              ElevatedButton.icon(
+                onPressed: onMyLocation,
+                icon: const Icon(Icons.my_location, size: 18),
+                label: const Text('My Location'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade700,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
               ),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            ),
+            ],
           ),
         ],
       ),
