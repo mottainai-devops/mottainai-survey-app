@@ -98,8 +98,12 @@ class SyncProvider with ChangeNotifier {
         return;
       }
 
+      // Ensure token is loaded before submitting
+      await _loadTokenFromStorage();
+
       int successCount = 0;
       int failCount = 0;
+      final List<String> errorDetails = [];
 
       for (final pickup in unsyncedPickups) {
         try {
@@ -107,33 +111,42 @@ class SyncProvider with ChangeNotifier {
           final firstPhoto = File(pickup.firstPhoto);
           final secondPhoto = File(pickup.secondPhoto);
 
-          // Check if files exist
-          if (!await firstPhoto.exists() || !await secondPhoto.exists()) {
-            print('Photo files not found for pickup ${pickup.id}');
+          // Check if files exist — surface a clear error if missing
+          if (!await firstPhoto.exists()) {
+            final msg = 'Photo 1 missing for #${pickup.id}';
+            debugPrint('[SyncProvider] $msg (path: ${pickup.firstPhoto})');
+            errorDetails.add(msg);
+            failCount++;
+            continue;
+          }
+          if (!await secondPhoto.exists()) {
+            final msg = 'Photo 2 missing for #${pickup.id}';
+            debugPrint('[SyncProvider] $msg (path: ${pickup.secondPhoto})');
+            errorDetails.add(msg);
             failCount++;
             continue;
           }
 
-      // Ensure token is loaded before submitting
-      await _loadTokenFromStorage();
-      
-      // Submit to server
+          // Submit to server
           final result = await _apiService.submitPickup(
             pickup,
             firstPhoto,
             secondPhoto,
           );
 
-          if (result['success']) {
+          if (result['success'] == true) {
             // Mark as synced in local database
             await _dbHelper.markAsSynced(pickup.id!);
             successCount++;
           } else {
-            print('Failed to sync pickup ${pickup.id}: ${result['error']}');
+            final serverError = result['error'] ?? 'Unknown server error';
+            debugPrint('[SyncProvider] Server rejected #${pickup.id}: $serverError');
+            errorDetails.add('Server: $serverError');
             failCount++;
           }
         } catch (e) {
-          print('Error syncing pickup ${pickup.id}: $e');
+          debugPrint('[SyncProvider] Exception syncing #${pickup.id}: $e');
+          errorDetails.add('Exception: $e');
           failCount++;
         }
       }
@@ -142,7 +155,9 @@ class SyncProvider with ChangeNotifier {
       _lastSyncTime = DateTime.now();
       
       if (failCount > 0) {
-        _lastSyncError = 'Synced $successCount, failed $failCount';
+        // Show the first specific error so the user knows what to fix
+        final detail = errorDetails.isNotEmpty ? '\n${errorDetails.first}' : '';
+        _lastSyncError = 'Synced $successCount, failed $failCount$detail';
       }
 
       _isSyncing = false;
