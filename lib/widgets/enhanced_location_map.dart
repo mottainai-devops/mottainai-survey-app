@@ -956,8 +956,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   _currentBounds = camera.visibleBounds;
                   _currentZoom = camera.zoom;
 
-                  // Re-render visible polygons on every move (debounced)
-                  if (_allPolygonData.isNotEmpty) {
+                  // Only re-cull on user gestures — programmatic moves (GPS
+                  // centering, onMapReady) must NOT trigger a culling pass
+                  // because they run before the initial render completes and
+                  // would wipe _visiblePolygons back to empty.
+                  if (hasGesture && _allPolygonData.isNotEmpty) {
                     _cullingDebounce?.cancel();
                     _cullingDebounce = Timer(
                       const Duration(milliseconds: 250),
