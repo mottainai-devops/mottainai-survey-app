@@ -235,7 +235,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
       if (cachedPolygons.isNotEmpty) {
         await _decodeAndRenderPolygons(cachedPolygons);
-        unawaited(_fetchCustomerNamesParallel(cachedPolygons.take(50).toList()));
+        // Fetch customer names for all cached polygons (no take() cap)
+        unawaited(_fetchCustomerNamesParallel(cachedPolygons));
       }
 
       unawaited(_startPhase3_BackgroundSync());
@@ -266,7 +267,15 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
     final needsRefresh = await _polygonService.needsRefresh();
 
-    if (!movedFarEnough && !needsRefresh && _cachedPolygons.isNotEmpty) {
+    // FIX 4: Count how many cached polygons are within 500m of the exact GPS point.
+    // If fewer than 5 are nearby, force a fresh sync even if we haven't moved far.
+    // This handles the case where the cache has 1000 buildings from a different area.
+    final nearbyCount = _cachedPolygons.where((p) =>
+        _distanceMetres(curLat, curLon, p.centerLat, p.centerLon) <= 500
+    ).length;
+    final hasSufficientLocalCoverage = nearbyCount >= 5;
+
+    if (!movedFarEnough && !needsRefresh && _cachedPolygons.isNotEmpty && hasSufficientLocalCoverage) {
       if (!mounted) return;
       setState(() {
         _phase = _LoadPhase.ready;
@@ -314,8 +323,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
         });
 
         await _decodeAndRenderPolygons(freshPolygons);
-        unawaited(
-            _fetchCustomerNamesParallel(freshPolygons.take(50).toList()));
+        // Fetch customer names for all fresh polygons (no take() cap)
+        unawaited(_fetchCustomerNamesParallel(freshPolygons));
 
         await prefs.setDouble('last_sync_lat', curLat);
         await prefs.setDouble('last_sync_lon', curLon);
@@ -455,23 +464,26 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       }
 
       final isSelected = _selectedPolygon?.buildingId == pd.buildingId;
-      final isCaptured = _customerNames.containsKey(pd.buildingId);
-      final polygonColor = _getPolygonColor(pd.buildingId);
+      final isCaptured = _customerNames.containsKey(pd.buildingId) &&
+          (_customerNames[pd.buildingId]?.isNotEmpty ?? false);
 
-      // FIX 1: No hitValue needed — tap detection uses ray-casting, not hitNotifier
+      // Colour logic:
+      //   Blue   = currently selected building
+      //   Green  = building has at least one captured customer
+      //   Orange = uncaptured building (no customer yet)
       visiblePolygons.add(Polygon(
         points: pd.points,
         color: isSelected
             ? Colors.blue.withValues(alpha: 0.55)
             : isCaptured
                 ? Colors.green.withValues(alpha: 0.45)
-                : polygonColor.withValues(alpha: 0.40),
+                : Colors.orange.withValues(alpha: 0.35),
         borderColor: isSelected
             ? Colors.blue
             : isCaptured
                 ? Colors.green.shade700
-                : polygonColor,
-        borderStrokeWidth: isSelected ? 5.0 : 4.0,
+                : Colors.orange.shade700,
+        borderStrokeWidth: isSelected ? 5.0 : 3.5,
       ));
 
       // FIX 1+2+4: Labels show customer names only (not building ID).
@@ -751,15 +763,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
-  Color _getPolygonColor(String buildingId) {
-    const colors = [
-      Color(0xFFE91E63), Color(0xFF9C27B0), Color(0xFF3F51B5),
-      Color(0xFF2196F3), Color(0xFF009688), Color(0xFF4CAF50),
-      Color(0xFFFFC107), Color(0xFFFF9800), Color(0xFFFF5722),
-      Color(0xFFF44336),
-    ];
-    return colors[buildingId.hashCode.abs() % colors.length];
-  }
+  // _getPolygonColor removed — colours are now semantic:
+  //   Blue = selected, Green = captured, Orange = uncaptured
 
   // ─── Dialogs ─────────────────────────────────────────────────────────────────
 
@@ -786,12 +791,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     // FIX 3: Always show the bottom sheet first so the user can confirm.
     // Only call onBuildingSelected (which fills the form) when the user
     // explicitly taps SELECT THIS BUILDING inside the sheet.
+    final existingCustomers = _customerNames[polygon.buildingId] ?? [];
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _BuildingInfoSheet(
         polygon: polygon,
+        existingCustomerNames: existingCustomers,
         onSelect: () {
           Navigator.pop(context);
           // Now confirm: fill the form
@@ -1293,8 +1300,13 @@ class _MapControls extends StatelessWidget {
 class _BuildingInfoSheet extends StatelessWidget {
   final BuildingPolygon polygon;
   final VoidCallback onSelect;
+  final List<String> existingCustomerNames;
 
-  const _BuildingInfoSheet({required this.polygon, required this.onSelect});
+  const _BuildingInfoSheet({
+    required this.polygon,
+    required this.onSelect,
+    this.existingCustomerNames = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1355,6 +1367,38 @@ class _BuildingInfoSheet extends StatelessWidget {
                               style: TextStyle(
                                   fontSize: 13, color: Colors.grey.shade600),
                             ),
+                          const SizedBox(height: 4),
+                          // Customer count badge
+                          Row(
+                            children: [
+                              Icon(
+                                existingCustomerNames.isEmpty
+                                    ? Icons.person_outline
+                                    : Icons.people,
+                                size: 14,
+                                color: existingCustomerNames.isEmpty
+                                    ? Colors.grey.shade500
+                                    : Colors.green.shade700,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                existingCustomerNames.isEmpty
+                                    ? 'No customers yet'
+                                    : '${existingCustomerNames.length} customer${existingCustomerNames.length == 1 ? '' : 's'}: ${existingCustomerNames.join(', ')}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: existingCustomerNames.isEmpty
+                                      ? Colors.grey.shade500
+                                      : Colors.green.shade700,
+                                  fontWeight: existingCustomerNames.isEmpty
+                                      ? FontWeight.normal
+                                      : FontWeight.w600,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
