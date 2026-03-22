@@ -688,15 +688,17 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Header
             Row(
               children: [
                 Icon(Icons.people, color: Colors.green.shade700),
@@ -721,19 +723,138 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 child: Text('No customers registered at this building.'),
               )
             else
-              ...customers.map((c) => ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.green.shade100,
-                      child: Icon(Icons.person,
-                          color: Colors.green.shade700, size: 18),
+              // One card per customer with view details + PICKUP button
+              ...customers.map((c) => Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    elevation: 0,
+                    color: Colors.green.shade50,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.green.shade200),
                     ),
-                    title: Text(c.displayName),
-                    subtitle: c.custPhone != null
-                        ? Text(c.custPhone!)
-                        : null,
-                    dense: true,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Customer name
+                          Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 18,
+                                backgroundColor: Colors.green.shade100,
+                                child: Icon(Icons.person,
+                                    color: Colors.green.shade700, size: 18),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  c.displayName,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15),
+                                ),
+                              ),
+                            ],
+                          ),
+                          // Phone
+                          if (c.custPhone != null && c.custPhone!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6, left: 46),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.phone,
+                                      size: 14,
+                                      color: Colors.grey.shade600),
+                                  const SizedBox(width: 4),
+                                  Text(c.custPhone!,
+                                      style: TextStyle(
+                                          color: Colors.grey.shade700,
+                                          fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                          // Email
+                          if (c.customerEmail != null &&
+                              c.customerEmail!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, left: 46),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.email,
+                                      size: 14,
+                                      color: Colors.grey.shade600),
+                                  const SizedBox(width: 4),
+                                  Text(c.customerEmail!,
+                                      style: TextStyle(
+                                          color: Colors.grey.shade700,
+                                          fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                          // Address
+                          if (c.address != null && c.address!.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, left: 46),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.location_on,
+                                      size: 14,
+                                      color: Colors.grey.shade600),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(c.address!,
+                                        style: TextStyle(
+                                            color: Colors.grey.shade700,
+                                            fontSize: 13)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          const SizedBox(height: 10),
+                          // PICKUP button
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.local_shipping, size: 16),
+                              label: const Text('PICKUP'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 10),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                // Fill form with this customer's data
+                                if (widget.onBuildingSelected != null) {
+                                  final enriched = BuildingPolygon(
+                                    buildingId: polygon.buildingId,
+                                    businessName: c.businessName,
+                                    custPhone: c.custPhone,
+                                    customerEmail: c.customerEmail,
+                                    address:
+                                        c.address ?? polygon.address,
+                                    zone: polygon.zone,
+                                    socioEconomicGroups:
+                                        polygon.socioEconomicGroups,
+                                    geometry: polygon.geometry,
+                                    centerLat: polygon.centerLat,
+                                    centerLon: polygon.centerLon,
+                                    lastUpdated: polygon.lastUpdated,
+                                  );
+                                  widget.onBuildingSelected!(enriched);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   )),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
           ],
         ),
       ),
