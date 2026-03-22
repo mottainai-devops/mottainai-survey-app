@@ -1,267 +1,377 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/building_polygon.dart';
+import '../models/customer_point.dart';
 
+/// Service for all ArcGIS FeatureServer interactions.
+///
+/// Two authoritative layers:
+///   Footprint Layer — building polygon geometries
+///   Customer Layer  — customer point features (child of footprint)
+///
+/// Both layers are the single source of truth. All reads come from here;
+/// all new customer writes go back here (addFeatures) to keep the map live.
 class ArcGISService {
-  // Building footprints from Customer Registration Map (Item ID: 8a269d4d8044457c8e0c646562dff53d)
-  // This is the New_Footprints_gdb layer within the Customer_RegMap web map
-  static const String _baseUrl =
-      'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services/New_Footprints_gdb_b1422/FeatureServer/0';
+  // ─── Layer URLs ──────────────────────────────────────────────────────────────
 
-  // The service has 1.5M features total. Use small pages to avoid connection abort on mobile.
-  // Reduced from 100 to 50 to make each request smaller and faster on slow mobile connections.
-  static const int _pageSize = 50;
+  static const String _footprintUrl =
+      'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services'
+      '/New_Footprints_gdb_b1422/FeatureServer/0';
 
-  // Request timeout - mobile connections can be slow.
-  // Increased from 30s to 90s because ArcGIS can be slow on 4G networks.
-  static const Duration _timeout = Duration(seconds: 90);
+  static const String _customerUrl =
+      'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services'
+      '/Customer_Layer_gdb/FeatureServer/0';
 
-  // Number of retries per page on timeout
+  // ─── Config ──────────────────────────────────────────────────────────────────
+
+  static const Duration _timeout = Duration(seconds: 60);
   static const int _maxRetries = 2;
 
-  /// Fetch building polygons within radius from a center point.
+  // Maximum buildings to load per viewport query (keeps response fast on mobile)
+  static const int _maxPolygonsPerQuery = 200;
+
+  // Maximum customer records to load per query
+  static const int _maxCustomersPerQuery = 500;
+
+  // ─── Footprint Layer ─────────────────────────────────────────────────────────
+
+  /// Fetch building polygons whose geometry intersects the given bounding box.
   ///
-  /// [lat] and [lon] are the center coordinates (WGS84).
-  /// [radiusKm] is the search radius in kilometers.
-  ///   Default is 5.0km — loads all buildings in the survey area.
-  ///   Results are paginated ([_pageSize] per page) to avoid oversized responses.
-  ///
-  /// [onProgress] optional callback called after each page with the running total.
-  ///
-  /// Fetches results in pages of [_pageSize] to avoid oversized responses.
+  /// [minLat], [maxLat], [minLon], [maxLon] define the viewport in WGS84.
+  /// Returns up to [_maxPolygonsPerQuery] polygons.
+  Future<List<BuildingPolygon>> fetchPolygonsInViewport({
+    required double minLat,
+    required double maxLat,
+    required double minLon,
+    required double maxLon,
+  }) async {
+    // ArcGIS envelope geometry: {xmin, ymin, xmax, ymax}
+    final envelope = jsonEncode({
+      'xmin': minLon,
+      'ymin': minLat,
+      'xmax': maxLon,
+      'ymax': maxLat,
+      'spatialReference': {'wkid': 4326},
+    });
+
+    final params = {
+      'where': '1=1',
+      'geometry': envelope,
+      'geometryType': 'esriGeometryEnvelope',
+      'inSR': '4326',
+      'spatialRel': 'esriSpatialRelIntersects',
+      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'returnGeometry': 'true',
+      'outSR': '4326',
+      'resultRecordCount': _maxPolygonsPerQuery.toString(),
+      'f': 'json',
+    };
+
+    print('[ArcGIS] Fetching polygons in viewport '
+        '($minLat,$minLon) → ($maxLat,$maxLon)');
+
+    final data = await _postQuery('$_footprintUrl/query', params);
+    final features = data['features'] as List<dynamic>? ?? [];
+
+    final polygons = <BuildingPolygon>[];
+    for (final f in features) {
+      try {
+        polygons.add(BuildingPolygon.fromArcGIS(f as Map<String, dynamic>));
+      } catch (e) {
+        print('[ArcGIS] Skipping bad footprint feature: $e');
+      }
+    }
+
+    print('[ArcGIS] Footprint query returned ${polygons.length} polygons');
+    return polygons;
+  }
+
+  /// Fetch building polygons within a radius of a center point.
+  /// Used on initial GPS location load.
   Future<List<BuildingPolygon>> fetchPolygonsNearLocation({
     required double lat,
     required double lon,
-    double radiusKm = 5.0,
+    double radiusKm = 0.5,
     void Function(int fetched)? onProgress,
   }) async {
     final radiusMeters = (radiusKm * 1000).round();
     final geometryJson =
         '{"x":$lon,"y":$lat,"spatialReference":{"wkid":4326}}';
 
-    final List<BuildingPolygon> allPolygons = [];
-    int offset = 0;
-    bool hasMore = true;
+    final params = {
+      'where': '1=1',
+      'geometry': geometryJson,
+      'geometryType': 'esriGeometryPoint',
+      'inSR': '4326',
+      'spatialRel': 'esriSpatialRelIntersects',
+      'distance': radiusMeters.toString(),
+      'units': 'esriSRUnit_Meter',
+      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'returnGeometry': 'true',
+      'outSR': '4326',
+      'resultRecordCount': _maxPolygonsPerQuery.toString(),
+      'f': 'json',
+    };
 
     print('[ArcGIS] Fetching polygons within ${radiusMeters}m of ($lat, $lon)');
 
-    while (hasMore) {
+    final data = await _postQuery('$_footprintUrl/query', params);
+    final features = data['features'] as List<dynamic>? ?? [];
+
+    final polygons = <BuildingPolygon>[];
+    for (final f in features) {
       try {
-        final queryParams = {
-          'where': '1=1',
-          'geometry': geometryJson,
-          'geometryType': 'esriGeometryPoint',
-          'inSR': '4326', // Required: tells ArcGIS the input CRS is WGS84
-          'spatialRel': 'esriSpatialRelIntersects',
-          'distance': radiusMeters.toString(),
-          'units': 'esriSRUnit_Meter',
-          'outFields':
-              'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
-          'returnGeometry': 'true',
-          'outSR': '4326', // Return coordinates in WGS84 (lon, lat) - avoids local projection issues
-          'resultRecordCount': _pageSize.toString(),
-          'resultOffset': offset.toString(),
-          'f': 'json',
-          // Service is public - no token required
-        };
-
-        // ✅ Use POST with form-encoded body to avoid long-URL truncation
-        //    (GET URLs exceed ~600 chars and are silently dropped in the field).
-        final uri = Uri.parse('$_baseUrl/query');
-
-        print(
-            '[ArcGIS] Fetching page offset=$offset, pageSize=$_pageSize (POST)...');
-
-        http.Response? response;
-        int attempt = 0;
-        while (attempt < _maxRetries) {
-          try {
-            response = await http
-                .post(
-                  uri,
-                  headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                  },
-                  body: queryParams,
-                )
-                .timeout(_timeout);
-            break; // success
-          } catch (retryErr) {
-            attempt++;
-            print('[ArcGIS] Attempt $attempt failed: $retryErr');
-            if (attempt >= _maxRetries) rethrow;
-            print('[ArcGIS] Retrying in 3 seconds...');
-            await Future.delayed(const Duration(seconds: 3));
-          }
-        }
-
-        if (response!.statusCode != 200) {
-          throw Exception(
-              'ArcGIS HTTP ${response.statusCode}: ${response.body.substring(0, 200)}');
-        }
-
-        final data = jsonDecode(response.body);
-
-        if (data['error'] != null) {
-          throw Exception(
-              'ArcGIS API Error: ${data['error']['message']} (code ${data['error']['code']})');
-        }
-
-        final features = data['features'] as List<dynamic>? ?? [];
-        final exceeded = data['exceededTransferLimit'] as bool? ?? false;
-
-        final page = features
-            .map((f) =>
-                BuildingPolygon.fromArcGIS(f as Map<String, dynamic>))
-            .toList();
-
-        allPolygons.addAll(page);
-        print('[ArcGIS] Page fetched: ${page.length} features (total so far: ${allPolygons.length})');
-        onProgress?.call(allPolygons.length);
-
-        // Continue paginating only if the server says there are more records
-        if (exceeded && features.length == _pageSize) {
-          offset += _pageSize;
-        } else {
-          hasMore = false;
-        }
-
-        // Safety cap: stop after 1000 buildings to avoid memory issues
-        if (allPolygons.length >= 1000) {
-          print('[ArcGIS] Reached 1000-building safety cap, stopping pagination');
-          hasMore = false;
-        }
+        polygons.add(BuildingPolygon.fromArcGIS(f as Map<String, dynamic>));
       } catch (e) {
-        print('[ArcGIS] Error fetching page at offset $offset: $e');
-        // Return whatever we have so far rather than losing everything
-        hasMore = false;
-        if (allPolygons.isEmpty) {
-          rethrow;
-        }
+        print('[ArcGIS] Skipping bad footprint feature: $e');
       }
     }
 
-    print('[ArcGIS] Done: ${allPolygons.length} buildings fetched');
-    return allPolygons;
+    onProgress?.call(polygons.length);
+    print('[ArcGIS] Radius query returned ${polygons.length} polygons');
+    return polygons;
   }
 
-  /// Fetch a single building polygon by building ID
+  /// Fetch a single building polygon by its building_id.
   Future<BuildingPolygon?> fetchPolygonByBuildingId(String buildingId) async {
+    final params = {
+      'where': "building_id='${_escapeSql(buildingId)}'",
+      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'returnGeometry': 'true',
+      'outSR': '4326',
+      'f': 'json',
+    };
+
     try {
-      final queryParams = {
-        'where': "building_id='$buildingId'",
-        'outFields':
-            'building_id,business_name,cust_phone,customer_email,address,Zone,socio_economic_groups',
-        'returnGeometry': 'true',
-        'outSR': '4326', // Return coordinates in WGS84 (lon, lat)
-        'f': 'json',
-        // Service is public - no token required
-      };
-
-      final uri =
-          Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);
-
-      final response = await http.get(uri).timeout(_timeout);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data['error'] != null) {
-          throw Exception(
-              'ArcGIS API Error: ${data['error']['message']}');
-        }
-
-        final features = data['features'] as List<dynamic>? ?? [];
-
-        if (features.isEmpty) {
-          return null;
-        }
-
-        return BuildingPolygon.fromArcGIS(
-            features[0] as Map<String, dynamic>);
-      } else {
-        throw Exception(
-            'Failed to fetch polygon: ${response.statusCode}');
-      }
+      final data = await _postQuery('$_footprintUrl/query', params);
+      final features = data['features'] as List<dynamic>? ?? [];
+      if (features.isEmpty) return null;
+      return BuildingPolygon.fromArcGIS(features[0] as Map<String, dynamic>);
     } catch (e) {
-      print('Error fetching polygon by ID: $e');
+      print('[ArcGIS] fetchPolygonByBuildingId error: $e');
       return null;
     }
   }
 
-  /// Test connection to ArcGIS service
-  Future<bool> testConnection() async {
+  // ─── Customer Layer ───────────────────────────────────────────────────────────
+
+  /// Fetch all customer points for a list of building IDs.
+  ///
+  /// Returns a map of buildingId → list of CustomerPoints.
+  /// This is the primary method used by the map to colour polygons and
+  /// render customer name label chips.
+  Future<Map<String, List<CustomerPoint>>> fetchCustomersForBuildings(
+      List<String> buildingIds) async {
+    if (buildingIds.isEmpty) return {};
+
+    // Build SQL IN clause — escape each ID
+    final inList = buildingIds
+        .map((id) => "'${_escapeSql(id)}'")
+        .join(',');
+
+    final params = {
+      'where': 'building_id IN ($inList)',
+      'outFields':
+          'OBJECTID,building_id,business_name,first_name,last_name,cust_phone,customer_email,customer_type,status,address2,Lat,Long',
+      'returnGeometry': 'true',
+      'outSR': '4326',
+      'resultRecordCount': _maxCustomersPerQuery.toString(),
+      'f': 'json',
+    };
+
+    print('[ArcGIS] Fetching customers for ${buildingIds.length} buildings');
+
     try {
-      // Service is public - no token required
-      final uri = Uri.parse('$_baseUrl?f=json');
-      final response = await http.get(uri).timeout(_timeout);
-      return response.statusCode == 200;
+      final data = await _postQuery('$_customerUrl/query', params);
+      final features = data['features'] as List<dynamic>? ?? [];
+
+      final result = <String, List<CustomerPoint>>{};
+      for (final f in features) {
+        try {
+          final cp = CustomerPoint.fromArcGIS(f as Map<String, dynamic>);
+          if (cp.buildingId.isEmpty) continue;
+          result.putIfAbsent(cp.buildingId, () => []).add(cp);
+        } catch (e) {
+          print('[ArcGIS] Skipping bad customer feature: $e');
+        }
+      }
+
+      final total = result.values.fold(0, (s, l) => s + l.length);
+      print('[ArcGIS] Customer query returned $total points '
+          'across ${result.length} buildings');
+      return result;
     } catch (e) {
-      print('ArcGIS connection test failed: $e');
+      print('[ArcGIS] fetchCustomersForBuildings error: $e');
+      return {};
+    }
+  }
+
+  /// Fetch all customers for a single building ID.
+  /// Used when tapping a polygon to show the full customer list.
+  Future<List<CustomerPoint>> fetchCustomersForBuilding(
+      String buildingId) async {
+    final map = await fetchCustomersForBuildings([buildingId]);
+    return map[buildingId] ?? [];
+  }
+
+  /// Add a new customer point to the ArcGIS Customer Layer.
+  ///
+  /// Call this after a successful form submission to keep the map live.
+  /// [buildingId] — the parent building's ID
+  /// [lat], [lon] — WGS84 coordinates (use building centroid if no GPS fix)
+  /// [attributes] — customer fields: business_name, first_name, last_name,
+  ///                cust_phone, customer_email, customer_type, address2
+  ///
+  /// Returns true on success, false on failure.
+  Future<bool> addCustomerToLayer({
+    required String buildingId,
+    required double lat,
+    required double lon,
+    required Map<String, dynamic> attributes,
+  }) async {
+    final feature = {
+      'geometry': {
+        'x': lon,
+        'y': lat,
+        'spatialReference': {'wkid': 4326},
+      },
+      'attributes': {
+        'building_id': buildingId,
+        'Lat': lat,
+        'Long': lon,
+        ...attributes,
+      },
+    };
+
+    final body = {
+      'features': jsonEncode([feature]),
+      'rollbackOnFailure': 'true',
+      'f': 'json',
+    };
+
+    print('[ArcGIS] Adding customer to layer for building: $buildingId');
+
+    try {
+      final uri = Uri.parse('$_customerUrl/addFeatures');
+      final response = await http
+          .post(uri,
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: body)
+          .timeout(_timeout);
+
+      if (response.statusCode != 200) {
+        print('[ArcGIS] addFeatures HTTP ${response.statusCode}');
+        return false;
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (data['error'] != null) {
+        print('[ArcGIS] addFeatures error: ${data['error']}');
+        return false;
+      }
+
+      final addResults = data['addResults'] as List<dynamic>? ?? [];
+      if (addResults.isEmpty) return false;
+
+      final success = addResults[0]['success'] as bool? ?? false;
+      if (success) {
+        print('[ArcGIS] Customer added successfully, '
+            'objectId=${addResults[0]['objectId']}');
+      } else {
+        print('[ArcGIS] addFeatures returned success=false: ${addResults[0]}');
+      }
+      return success;
+    } catch (e) {
+      print('[ArcGIS] addCustomerToLayer error: $e');
       return false;
     }
   }
 
-  /// Get socio-economic class for a building from the feature layer
-  /// Returns: "low", "medium", "high", or null if not found
+  // ─── Socio-economic helper (unchanged) ───────────────────────────────────────
+
+  /// Get socio-economic class for a building from the footprint layer.
   Future<String?> getSocioEconomicClass(String buildingId) async {
     try {
-      final queryParams = {
-        'where': "building_id='$buildingId'",
+      final params = {
+        'where': "building_id='${_escapeSql(buildingId)}'",
         'outFields': 'socio_economic_groups',
         'returnGeometry': 'false',
         'f': 'json',
-        // Service is public - no token required
       };
 
-      final uri =
-          Uri.parse('$_baseUrl/query').replace(queryParameters: queryParams);
-
-      print('[ArcGIS] Querying socio-class for building: $buildingId');
-      final response = await http.get(uri).timeout(_timeout);
-
-      if (response.statusCode != 200) {
-        print('[ArcGIS] Query failed with status: ${response.statusCode}');
-        return null;
-      }
-
-      final data = jsonDecode(response.body);
-
-      if (data['error'] != null) {
-        print('[ArcGIS] API Error: ${data['error']['message']}');
-        return null;
-      }
-
+      final data = await _postQuery('$_footprintUrl/query', params);
       final features = data['features'] as List<dynamic>? ?? [];
+      if (features.isEmpty) return null;
 
-      if (features.isEmpty) {
-        print('[ArcGIS] No features found for buildingId: $buildingId');
-        return null;
-      }
-
-      // Extract socio-economic class from first feature
-      final attributes =
-          features[0]['attributes'] as Map<String, dynamic>;
-      final socioClass = attributes['socio_economic_groups'] as String?;
-
-      // Validate and normalize the value
-      if (socioClass == null || socioClass.isEmpty) {
-        print('[ArcGIS] No socio-class value for building: $buildingId');
-        return null;
-      }
+      final attrs = features[0]['attributes'] as Map<String, dynamic>;
+      final socioClass = attrs['socio_economic_groups']?.toString();
+      if (socioClass == null || socioClass.isEmpty) return null;
 
       final normalized = socioClass.toLowerCase().trim();
-      if (!['low', 'medium', 'high'].contains(normalized)) {
-        print('[ArcGIS] Invalid socio-class value: $socioClass');
-        return null;
-      }
-
-      print(
-          '[ArcGIS] Socio-class found: $normalized for building: $buildingId');
-      return normalized;
+      return ['low', 'medium', 'high'].contains(normalized)
+          ? normalized
+          : null;
     } catch (e) {
-      print('[ArcGIS] Error querying socio-class: $e');
+      print('[ArcGIS] getSocioEconomicClass error: $e');
       return null;
     }
   }
+
+  /// Test connectivity to both layers.
+  Future<bool> testConnection() async {
+    try {
+      final uri = Uri.parse('$_footprintUrl?f=json');
+      final response = await http.get(uri).timeout(_timeout);
+      return response.statusCode == 200;
+    } catch (e) {
+      print('[ArcGIS] testConnection failed: $e');
+      return false;
+    }
+  }
+
+  // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+  /// POST a query to an ArcGIS FeatureServer endpoint with retry logic.
+  Future<Map<String, dynamic>> _postQuery(
+      String url, Map<String, String> params) async {
+    final uri = Uri.parse(url);
+    http.Response? response;
+    int attempt = 0;
+
+    while (attempt < _maxRetries) {
+      try {
+        response = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: params,
+            )
+            .timeout(_timeout);
+        break;
+      } catch (e) {
+        attempt++;
+        print('[ArcGIS] Attempt $attempt failed for $url: $e');
+        if (attempt >= _maxRetries) rethrow;
+        await Future.delayed(const Duration(seconds: 3));
+      }
+    }
+
+    if (response!.statusCode != 200) {
+      throw Exception(
+          'ArcGIS HTTP ${response.statusCode} for $url');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (data['error'] != null) {
+      throw Exception(
+          'ArcGIS API error: ${data['error']['message']} '
+          '(code ${data['error']['code']})');
+    }
+
+    return data;
+  }
+
+  /// Escape single quotes in SQL string literals.
+  String _escapeSql(String s) => s.replaceAll("'", "''");
 }

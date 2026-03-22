@@ -456,6 +456,52 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       await DatabaseHelper.instance.createPickup(pickup);
       await syncProvider.incrementUnsyncedCount();
 
+      // ── Write customer to ArcGIS Customer Layer ──────────────────────────
+      // This keeps the map labels live and consistent with all other systems
+      // that read from the ArcGIS Customer Layer.
+      // We fire-and-forget (unawaited) so a slow ArcGIS response does not
+      // block the user from continuing. Failures are logged but not fatal.
+      final buildingId = _buildingIdController.text.trim();
+      final lat = _latitude ?? _selectedBuilding?.centerLat ?? 0.0;
+      final lon = _longitude ?? _selectedBuilding?.centerLon ?? 0.0;
+      if (buildingId.isNotEmpty && lat != 0.0 && lon != 0.0) {
+        _arcgisService
+            .addCustomerToLayer(
+          buildingId: buildingId,
+          lat: lat,
+          lon: lon,
+          attributes: {
+            'business_name': _businessNameController.text.trim().isEmpty
+                ? null
+                : _businessNameController.text.trim(),
+            'cust_phone': _customerPhoneController.text.trim().isEmpty
+                ? null
+                : _customerPhoneController.text.trim(),
+            'customer_email': _customerEmailController.text.trim().isEmpty
+                ? null
+                : _customerEmailController.text.trim(),
+            'address2': _customerAddressController.text.trim().isEmpty
+                ? null
+                : _customerAddressController.text.trim(),
+            'customer_type': _customerType == 'Residential' ? '1' : '2',
+            'status': 'active',
+          },
+        )
+            .then((success) {
+          if (!success) {
+            debugPrint(
+                '[ArcGIS] Customer write-back failed for $buildingId — '
+                'will be out of sync until next map refresh');
+          } else {
+            debugPrint(
+                '[ArcGIS] Customer written to layer for $buildingId');
+          }
+        }).catchError((e) {
+          debugPrint('[ArcGIS] Customer write-back error: $e');
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       if (mounted) {
         // Try to sync immediately if online
         syncProvider.syncPendingPickups();
