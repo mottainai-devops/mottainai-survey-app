@@ -691,19 +691,18 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
               ),
             ),
             const SizedBox(height: 8),
-            // FlutterMap requires a bounded height. ListView gives unbounded
-            // vertical space, so we constrain the map widget explicitly here.
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.45,
-              child: EnhancedLocationMap(
-                onLocationSelected: (lat, lon) {
-                  setState(() {
-                    _latitude = lat;
-                    _longitude = lon;
-                  });
-                },
-                onBuildingSelected: _handleBuildingSelected,
-              ),
+            // EnhancedLocationMap contains a fixed-height 400px map internally.
+            // Removing the outer SizedBox constraint prevents the widget from
+            // overflowing its bounds and overlapping the Building Information
+            // card that follows it in the ListView.
+            EnhancedLocationMap(
+              onLocationSelected: (lat, lon) {
+                setState(() {
+                  _latitude = lat;
+                  _longitude = lon;
+                });
+              },
+              onBuildingSelected: _handleBuildingSelected,
             ),
             const SizedBox(height: 16),
 
