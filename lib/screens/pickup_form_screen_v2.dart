@@ -30,6 +30,7 @@ class PickupFormScreenV2 extends StatefulWidget {
 
 class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
   final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
   final _supervisorIdController = TextEditingController();
   final _buildingIdController = TextEditingController();
   final _businessNameController = TextEditingController();
@@ -100,6 +101,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _supervisorIdController.dispose();
     _buildingIdController.dispose();
     _businessNameController.dispose();
@@ -161,7 +163,18 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       _customerZone = polygon.zone;
       _socioEconomicGroup = polygon.socioEconomicGroups;
     });
-    
+
+    // Scroll down so the Building Information form fields are visible
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
     // Auto-populate socio-economic class from ArcGIS
     await _loadSocioEconomicClass(polygon.buildingId);
   }
@@ -562,6 +575,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       body: Form(
         key: _formKey,
         child: ListView(
+          controller: _scrollController,
           padding: const EdgeInsets.all(16),
           children: [
             // Company Selection

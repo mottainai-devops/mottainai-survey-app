@@ -214,9 +214,11 @@ class ArcGISService {
     return map[buildingId] ?? [];
   }
 
-  /// Add a new customer point to the ArcGIS Customer Layer.
+  /// Upsert a customer point in the ArcGIS Customer Layer.
   ///
-  /// Call this after a successful form submission to keep the map live.
+  /// If a customer with [buildingId] already exists, it is updated in-place
+  /// (preventing duplicate entries). If none exists, a new feature is added.
+  ///
   /// [buildingId] — the parent building's ID
   /// [lat], [lon] — WGS84 coordinates (use building centroid if no GPS fix)
   /// [attributes] — customer fields: business_name, first_name, last_name,
@@ -229,61 +231,104 @@ class ArcGISService {
     required double lon,
     required Map<String, dynamic> attributes,
   }) async {
-    final feature = {
-      'geometry': {
-        'x': lon,
-        'y': lat,
-        'spatialReference': {'wkid': 4326},
-      },
-      'attributes': {
-        'building_id': buildingId,
-        'Lat': lat,
-        'Long': lon,
-        ...attributes,
-      },
+    final geometry = {
+      'x': lon,
+      'y': lat,
+      'spatialReference': {'wkid': 4326},
+    };
+    final attrs = {
+      'building_id': buildingId,
+      'Lat': lat,
+      'Long': lon,
+      ...attributes,
     };
 
-    final body = {
-      'features': jsonEncode([feature]),
-      'rollbackOnFailure': 'true',
-      'f': 'json',
-    };
-
-    print('[ArcGIS] Adding customer to layer for building: $buildingId');
+    print('[ArcGIS] Upserting customer for building: $buildingId');
 
     try {
-      final uri = Uri.parse('$_customerUrl/addFeatures');
-      final response = await http
-          .post(uri,
-              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-              body: body)
-          .timeout(_timeout);
+      // ── Step 1: check for an existing record with this buildingId ──────────
+      final queryParams = {
+        'where': "building_id='${_escapeSql(buildingId)}'",
+        'outFields': 'OBJECTID',
+        'returnGeometry': 'false',
+        'resultRecordCount': '1',
+        'f': 'json',
+      };
+      final queryData = await _postQuery('$_customerUrl/query', queryParams);
+      final features = queryData['features'] as List<dynamic>? ?? [];
 
-      if (response.statusCode != 200) {
-        print('[ArcGIS] addFeatures HTTP ${response.statusCode}');
-        return false;
-      }
+      if (features.isNotEmpty) {
+        // ── Step 2a: UPDATE existing record ──────────────────────────────────
+        final objectId =
+            (features[0]['attributes'] as Map<String, dynamic>)['OBJECTID'];
+        final updateFeature = {
+          'geometry': geometry,
+          'attributes': {'OBJECTID': objectId, ...attrs},
+        };
+        final updateBody = {
+          'features': jsonEncode([updateFeature]),
+          'rollbackOnFailure': 'true',
+          'f': 'json',
+        };
+        final uri = Uri.parse('$_customerUrl/updateFeatures');
+        final response = await http
+            .post(uri,
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: updateBody)
+            .timeout(_timeout);
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (data['error'] != null) {
-        print('[ArcGIS] addFeatures error: ${data['error']}');
-        return false;
-      }
-
-      final addResults = data['addResults'] as List<dynamic>? ?? [];
-      if (addResults.isEmpty) return false;
-
-      final success = addResults[0]['success'] as bool? ?? false;
-      if (success) {
-        print('[ArcGIS] Customer added successfully, '
-            'objectId=${addResults[0]['objectId']}');
+        if (response.statusCode != 200) {
+          print('[ArcGIS] updateFeatures HTTP ${response.statusCode}');
+          return false;
+        }
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['error'] != null) {
+          print('[ArcGIS] updateFeatures error: ${data['error']}');
+          return false;
+        }
+        final updateResults = data['updateResults'] as List<dynamic>? ?? [];
+        final success = updateResults.isNotEmpty &&
+            (updateResults[0]['success'] as bool? ?? false);
+        print('[ArcGIS] Customer updated (objectId=$objectId), '
+            'success=$success');
+        return success;
       } else {
-        print('[ArcGIS] addFeatures returned success=false: ${addResults[0]}');
+        // ── Step 2b: INSERT new record ────────────────────────────────────────
+        final addFeature = {'geometry': geometry, 'attributes': attrs};
+        final addBody = {
+          'features': jsonEncode([addFeature]),
+          'rollbackOnFailure': 'true',
+          'f': 'json',
+        };
+        final uri = Uri.parse('$_customerUrl/addFeatures');
+        final response = await http
+            .post(uri,
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: addBody)
+            .timeout(_timeout);
+
+        if (response.statusCode != 200) {
+          print('[ArcGIS] addFeatures HTTP ${response.statusCode}');
+          return false;
+        }
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['error'] != null) {
+          print('[ArcGIS] addFeatures error: ${data['error']}');
+          return false;
+        }
+        final addResults = data['addResults'] as List<dynamic>? ?? [];
+        if (addResults.isEmpty) return false;
+        final success = addResults[0]['success'] as bool? ?? false;
+        print('[ArcGIS] Customer added (objectId=${addResults[0]['objectId']}), '
+            'success=$success');
+        return success;
       }
-      return success;
     } catch (e) {
-      print('[ArcGIS] addCustomerToLayer error: $e');
+      print('[ArcGIS] addCustomerToLayer (upsert) error: $e');
       return false;
     }
   }

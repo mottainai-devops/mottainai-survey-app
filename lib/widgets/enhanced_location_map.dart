@@ -189,8 +189,14 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
             locationData.latitude!, locationData.longitude!);
       }
 
+      // Move map to GPS location — use postFrameCallback to ensure
+      // MapController is fully attached regardless of build timing.
       if (_mapReady) {
         _mapController.move(currentLoc, 18.5);
+        _pendingCenter = null;
+      } else {
+        // onMapReady will pick up _pendingCenter once the map is ready
+        // (already set above via setState)
       }
 
       // Load polygons around GPS location immediately
@@ -922,8 +928,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                 },
                 onMapReady: () {
                   _mapReady = true;
-                  if (_pendingCenter != null) {
-                    _mapController.move(_pendingCenter!, 18.5);
+                  // Move to GPS location if available — covers the race where
+                  // GPS arrived before the map was ready.
+                  final target = _pendingCenter ?? _currentLocation;
+                  if (target != null) {
+                    _mapController.move(target, 18.5);
                     _pendingCenter = null;
                   }
                   if (_allPolygonData.isNotEmpty) {
