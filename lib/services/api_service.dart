@@ -113,6 +113,13 @@ class ApiService {
         request.headers['Authorization'] = _token!;
       }
 
+      // ── Routing & identity fields (REQUIRED by backend) ─────────────────
+      // formId is the webhook URL that tells the backend which form/lot this
+      // submission belongs to. Without it the backend cannot route the request
+      // and will reject it. supervisorId identifies the field supervisor.
+      request.fields['formId'] = pickup.formId;
+      request.fields['supervisorId'] = pickup.supervisorId;
+
       // Customer contact fields (fixed in v3.2.5 — previously sent as empty strings)
       request.fields['customerName'] = pickup.customerName;
       request.fields['customerPhone'] = pickup.customerPhone;
@@ -147,6 +154,12 @@ class ApiService {
       }
       if (pickup.companyName != null) {
         request.fields['companyName'] = pickup.companyName!;
+      }
+      if (pickup.lotCode != null) {
+        request.fields['lotCode'] = pickup.lotCode!;
+      }
+      if (pickup.lotName != null) {
+        request.fields['lotName'] = pickup.lotName!;
       }
 
       // Add photo files
