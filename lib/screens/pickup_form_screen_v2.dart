@@ -476,37 +476,46 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       await syncProvider.incrementUnsyncedCount();
 
       // ── Write customer to ArcGIS Customer Layer ──────────────────────────
-      // This keeps the map labels live and consistent with all other systems
-      // that read from the ArcGIS Customer Layer.
-      // We fire-and-forget (unawaited) so a slow ArcGIS response does not
-      // block the user from continuing. Failures are logged but not fatal.
+      // Architecture: one Customer Layer point per unit, keyed by
+      // building_id + flat_no (R1, R2, C1, C2…).
+      // Step 1: derive the next sequential unit code.
+      // Step 2: upsert the Customer Layer point with the composite key.
+      // Fire-and-forget so ArcGIS latency never blocks the user.
       final buildingId = _buildingIdController.text.trim();
       final lat = _latitude ?? _selectedBuilding?.centerLat ?? 0.0;
       final lon = _longitude ?? _selectedBuilding?.centerLon ?? 0.0;
+      final customerTypeCode = _customerType == 'Residential' ? '1' : '2';
       if (buildingId.isNotEmpty && lat != 0.0 && lon != 0.0) {
         _arcgisService
-            .addCustomerToLayer(
+            .getNextUnitCode(
           buildingId: buildingId,
-          lat: lat,
-          lon: lon,
-          attributes: {
-            'business_name': _businessNameController.text.trim().isEmpty
-                ? null
-                : _businessNameController.text.trim(),
-            'cust_phone': _customerPhoneController.text.trim().isEmpty
-                ? null
-                : _customerPhoneController.text.trim(),
-            'customer_email': _customerEmailController.text.trim().isEmpty
-                ? null
-                : _customerEmailController.text.trim(),
-            'address2': _customerAddressController.text.trim().isEmpty
-                ? null
-                : _customerAddressController.text.trim(),
-            'customer_type': _customerType == 'Residential' ? '1' : '2',
-            'status': 'active',
-          },
+          customerType: customerTypeCode,
         )
-            .then((success) {
+            .then((unitCode) {
+          debugPrint('[ArcGIS] Assigned unit code $unitCode for $buildingId');
+          return _arcgisService.addCustomerToLayer(
+            buildingId: buildingId,
+            lat: lat,
+            lon: lon,
+            flatNo: unitCode,
+            attributes: {
+              'business_name': _businessNameController.text.trim().isEmpty
+                  ? null
+                  : _businessNameController.text.trim(),
+              'cust_phone': _customerPhoneController.text.trim().isEmpty
+                  ? null
+                  : _customerPhoneController.text.trim(),
+              'customer_email': _customerEmailController.text.trim().isEmpty
+                  ? null
+                  : _customerEmailController.text.trim(),
+              'address2': _customerAddressController.text.trim().isEmpty
+                  ? null
+                  : _customerAddressController.text.trim(),
+              'customer_type': customerTypeCode,
+              'status': 'active',
+            },
+          );
+        }).then((success) {
           if (!success) {
             debugPrint(
                 '[ArcGIS] Customer write-back failed for $buildingId — '

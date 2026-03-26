@@ -441,7 +441,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
         for (int ci = 0; ci < customers.length; ci++) {
           final customer = customers[ci];
-          final labelText = customer.displayName;
+          // Show unit code (R1, C2…) if available, else fall back to display name
+          final labelText = (customer.flatNo != null && customer.flatNo!.isNotEmpty)
+              ? customer.flatNo!
+              : customer.displayName;
           if (labelText.isEmpty) continue;
 
           // Offset each chip slightly downward from the centroid (~5m per chip)
@@ -450,20 +453,36 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
           visibleMarkers.add(Marker(
             point: chipPoint,
-            width: 140,
+            width: 60,
             height: 28,
             child: GestureDetector(
-              // Label tap = VIEW ONLY (show customer list, no form fill)
+              // Label tap = START PICKUP DIRECTLY for this specific unit
+              // (polygon tap = confirmation sheet with all units listed)
               behavior: HitTestBehavior.deferToChild,
               onTap: () {
-                if (buildingPolygon != null) {
-                  _showCustomersViewOnly(buildingPolygon,
-                      _liveCustomers[pd.buildingId] ?? []);
+                if (buildingPolygon != null &&
+                    widget.onBuildingSelected != null) {
+                  // Enrich the polygon with this customer's data and
+                  // start the pickup form immediately
+                  final enriched = BuildingPolygon(
+                    buildingId: buildingPolygon.buildingId,
+                    businessName: customer.businessName,
+                    custPhone: customer.custPhone,
+                    customerEmail: customer.customerEmail,
+                    address: customer.address ?? buildingPolygon.address,
+                    zone: buildingPolygon.zone,
+                    socioEconomicGroups: buildingPolygon.socioEconomicGroups,
+                    geometry: buildingPolygon.geometry,
+                    centerLat: buildingPolygon.centerLat,
+                    centerLon: buildingPolygon.centerLon,
+                    lastUpdated: buildingPolygon.lastUpdated,
+                  );
+                  widget.onBuildingSelected!(enriched);
                 }
               },
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
                   color: Colors.green.shade700,
                   borderRadius: BorderRadius.circular(5),

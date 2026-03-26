@@ -1,9 +1,17 @@
 /// Represents a single customer point from the ArcGIS Customer Layer.
 /// Each CustomerPoint is spatially associated with a building polygon
 /// via the [buildingId] foreign key.
+///
+/// The composite key is [buildingId] + [flatNo] (unit code, e.g. R1, C2).
+/// One CustomerPoint exists per unit — never one per polygon.
 class CustomerPoint {
   final int? objectId;
   final String buildingId;
+
+  /// Unit code assigned to this customer (e.g. R1, R2, C1, C2).
+  /// Stored in the ArcGIS `flat_no` field.
+  final String? flatNo;
+
   final String? businessName;
   final String? firstName;
   final String? lastName;
@@ -18,6 +26,7 @@ class CustomerPoint {
   const CustomerPoint({
     this.objectId,
     required this.buildingId,
+    this.flatNo,
     this.businessName,
     this.firstName,
     this.lastName,
@@ -30,7 +39,15 @@ class CustomerPoint {
     this.lon,
   });
 
-  /// The name to display on the map label chip and in customer lists.
+  /// The primary label shown on the map chip.
+  /// Prefers the unit code (R1, C2) so the map stays clean and unambiguous.
+  /// Falls back to business_name → "first last" → buildingId.
+  String get chipLabel {
+    if (flatNo != null && flatNo!.trim().isNotEmpty) return flatNo!.trim();
+    return displayName;
+  }
+
+  /// The full customer name for display in lists and sheets.
   /// Prefers business_name; falls back to "first last"; falls back to buildingId.
   String get displayName {
     if (businessName != null && businessName!.trim().isNotEmpty) {
@@ -67,6 +84,7 @@ class CustomerPoint {
     return CustomerPoint(
       objectId: attrs['OBJECTID'] as int?,
       buildingId: attrs['building_id']?.toString() ?? '',
+      flatNo: _nullIfEmpty(attrs['flat_no']?.toString()),
       businessName: _nullIfEmpty(attrs['business_name']?.toString()),
       firstName: _nullIfEmpty(attrs['first_name']?.toString()),
       lastName: _nullIfEmpty(attrs['last_name']?.toString()),
@@ -89,10 +107,11 @@ class CustomerPoint {
   static String? _nullIfEmpty(String? s) =>
       (s == null || s.trim().isEmpty || s == 'null') ? null : s.trim();
 
-  /// Convert to ArcGIS addFeatures attributes map.
+  /// Convert to ArcGIS addFeatures / updateFeatures attributes map.
   Map<String, dynamic> toArcGISAttributes() {
     return {
       'building_id': buildingId,
+      if (flatNo != null) 'flat_no': flatNo,
       if (businessName != null) 'business_name': businessName,
       if (firstName != null) 'first_name': firstName,
       if (lastName != null) 'last_name': lastName,

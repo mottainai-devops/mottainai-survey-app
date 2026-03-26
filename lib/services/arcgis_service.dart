@@ -6,11 +6,12 @@ import '../models/customer_point.dart';
 /// Service for all ArcGIS FeatureServer interactions.
 ///
 /// Two authoritative layers:
-///   Footprint Layer — building polygon geometries
-///   Customer Layer  — customer point features (child of footprint)
+///   Footprint Layer — building polygon geometries (primary record)
+///   Customer Layer  — customer point features, one per unit
+///                     composite key: building_id + flat_no (R1, R2, C1, C2…)
 ///
-/// Both layers are the single source of truth. All reads come from here;
-/// all new customer writes go back here (addFeatures) to keep the map live.
+/// All reads come from here; all new customer writes go back here to keep
+/// the map labels live and consistent.
 class ArcGISService {
   // ─── Layer URLs ──────────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ class ArcGISService {
   ///
   /// Returns a map of buildingId → list of CustomerPoints.
   /// This is the primary method used by the map to colour polygons and
-  /// render customer name label chips.
+  /// render unit code label chips (R1, C2, etc.).
   Future<Map<String, List<CustomerPoint>>> fetchCustomersForBuildings(
       List<String> buildingIds) async {
     if (buildingIds.isEmpty) return {};
@@ -172,7 +173,7 @@ class ArcGISService {
     final params = {
       'where': 'building_id IN ($inList)',
       'outFields':
-          'OBJECTID,building_id,business_name,first_name,last_name,cust_phone,customer_email,customer_type,status,address2,Lat,Long',
+          'OBJECTID,building_id,flat_no,business_name,first_name,last_name,cust_phone,customer_email,customer_type,status,address2,Lat,Long',
       'returnGeometry': 'true',
       'outSR': '4326',
       'resultRecordCount': _maxCustomersPerQuery.toString(),
@@ -214,15 +215,64 @@ class ArcGISService {
     return map[buildingId] ?? [];
   }
 
+  // ─── Unit code derivation ─────────────────────────────────────────────────────
+
+  /// Derive the next sequential unit code for a building based on customer_type.
+  ///
+  /// Residential (type '1') → R1, R2, R3 …
+  /// Commercial  (type '2') → C1, C2, C3 …
+  ///
+  /// Queries the Customer Layer for existing units at [buildingId] and returns
+  /// the next available code. Returns 'R1' or 'C1' if none exist yet.
+  Future<String> getNextUnitCode({
+    required String buildingId,
+    required String customerType, // '1' = residential, '2' = commercial
+  }) async {
+    final prefix = (customerType == '1') ? 'R' : 'C';
+    try {
+      final params = {
+        'where': "building_id='${_escapeSql(buildingId)}' AND flat_no LIKE '${prefix}%'",
+        'outFields': 'flat_no',
+        'returnGeometry': 'false',
+        'resultRecordCount': '100',
+        'f': 'json',
+      };
+      final data = await _postQuery('$_customerUrl/query', params);
+      final features = data['features'] as List<dynamic>? ?? [];
+
+      // Extract existing numeric suffixes (e.g. R1 → 1, R2 → 2)
+      int maxNum = 0;
+      for (final f in features) {
+        final attrs = f['attributes'] as Map<String, dynamic>? ?? {};
+        final flatNo = attrs['flat_no']?.toString() ?? '';
+        if (flatNo.startsWith(prefix)) {
+          final numStr = flatNo.substring(prefix.length);
+          final num = int.tryParse(numStr);
+          if (num != null && num > maxNum) maxNum = num;
+        }
+      }
+      final nextCode = '$prefix${maxNum + 1}';
+      print('[ArcGIS] Next unit code for $buildingId (type=$customerType): $nextCode');
+      return nextCode;
+    } catch (e) {
+      print('[ArcGIS] getNextUnitCode error: $e — defaulting to ${prefix}1');
+      return '${prefix}1';
+    }
+  }
+
+  // ─── Customer upsert ──────────────────────────────────────────────────────────
+
   /// Upsert a customer point in the ArcGIS Customer Layer.
   ///
-  /// If a customer with [buildingId] already exists, it is updated in-place
-  /// (preventing duplicate entries). If none exists, a new feature is added.
+  /// The composite key is [buildingId] + [flatNo] — one record per unit.
+  /// If a record with this key already exists it is updated in-place.
+  /// If none exists, a new feature is added.
   ///
-  /// [buildingId] — the parent building's ID
-  /// [lat], [lon] — WGS84 coordinates (use building centroid if no GPS fix)
-  /// [attributes] — customer fields: business_name, first_name, last_name,
-  ///                cust_phone, customer_email, customer_type, address2
+  /// [buildingId]  — the parent building's ArcGIS building_id
+  /// [flatNo]      — unit code e.g. R1, R2, C1, C2 (derive via getNextUnitCode)
+  /// [lat], [lon]  — WGS84 coordinates (use building centroid if no GPS fix)
+  /// [attributes]  — customer fields: business_name, first_name, last_name,
+  ///                 cust_phone, customer_email, customer_type, address2
   ///
   /// Returns true on success, false on failure.
   Future<bool> addCustomerToLayer({
@@ -230,6 +280,7 @@ class ArcGISService {
     required double lat,
     required double lon,
     required Map<String, dynamic> attributes,
+    String? flatNo, // unit code e.g. R1, C2 — derive via getNextUnitCode()
   }) async {
     final geometry = {
       'x': lon,
@@ -240,15 +291,22 @@ class ArcGISService {
       'building_id': buildingId,
       'Lat': lat,
       'Long': lon,
+      if (flatNo != null) 'flat_no': flatNo,
       ...attributes,
     };
 
-    print('[ArcGIS] Upserting customer for building: $buildingId');
+    print('[ArcGIS] Upserting customer for building: $buildingId unit: ${flatNo ?? "(no unit code)"}');
 
     try {
-      // ── Step 1: check for an existing record with this buildingId ──────────
+      // ── Step 1: check for an existing record with this buildingId + flat_no ──
+      // The composite key (building_id + flat_no) ensures one point per unit.
+      // If flatNo is null (legacy call), fall back to building_id-only lookup.
+      final whereClause = flatNo != null
+          ? "building_id='${_escapeSql(buildingId)}' AND flat_no='${_escapeSql(flatNo)}'"
+          : "building_id='${_escapeSql(buildingId)}'";
+
       final queryParams = {
-        'where': "building_id='${_escapeSql(buildingId)}'",
+        'where': whereClause,
         'outFields': 'OBJECTID',
         'returnGeometry': 'false',
         'resultRecordCount': '1',
@@ -291,7 +349,7 @@ class ArcGISService {
         final updateResults = data['updateResults'] as List<dynamic>? ?? [];
         final success = updateResults.isNotEmpty &&
             (updateResults[0]['success'] as bool? ?? false);
-        print('[ArcGIS] Customer updated (objectId=$objectId), '
+        print('[ArcGIS] Customer updated (objectId=$objectId unit=$flatNo), '
             'success=$success');
         return success;
       } else {
@@ -323,7 +381,7 @@ class ArcGISService {
         final addResults = data['addResults'] as List<dynamic>? ?? [];
         if (addResults.isEmpty) return false;
         final success = addResults[0]['success'] as bool? ?? false;
-        print('[ArcGIS] Customer added (objectId=${addResults[0]['objectId']}), '
+        print('[ArcGIS] Customer added (objectId=${addResults[0]['objectId']} unit=$flatNo), '
             'success=$success');
         return success;
       }
@@ -333,7 +391,7 @@ class ArcGISService {
     }
   }
 
-  // ─── Socio-economic helper (unchanged) ───────────────────────────────────────
+  // ─── Socio-economic helper ────────────────────────────────────────────────────
 
   /// Get socio-economic class for a building from the footprint layer.
   Future<String?> getSocioEconomicClass(String buildingId) async {
