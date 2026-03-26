@@ -10,7 +10,7 @@
 
 | Component | Version | Last Updated | Key Details |
 | :--- | :--- | :--- | :--- |
-| 📱 **Mobile App** | `v3.2.45` | Mar 26, 2026 | Latest APK built; no change required for lots bug |
+| 📱 **Mobile App** | `v3.2.46` | Mar 26, 2026 | Architecture compliance: unit code (R1/C2) labels, composite key upsert, direct pickup from label tap |
 | ☁️ **Backend (old)** | `v2.2.0` | Nov 25, 2025 | Login/submit API URL: `https://upwork.kowope.xyz` |
 | 🖥️ **Admin Dashboard Backend** | `v1.x` | Mar 26, 2026 | Lots API URL: `https://admin.kowope.xyz` — **PATCH REQUIRED (see Section 3)** |
 | 🗃️ **Database** | `v8` (SQLite) | Mar 10, 2026 | `customerName`, `customerPhone`, `customerEmail`, `customerAddress` columns added to `pickups` |
@@ -131,7 +131,8 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 
 ### Pending Changes
 
-- ⏳ **Backend team**: Apply `lots.list` companyId fix to `admin.kowope.xyz` (see open issue above). Full instructions in `backend-bug-report-lots-companyid.md`.
+- ⏳ **Backend team**: Apply `lots.list` companyId fix to `admin.kowope.xyz` (see open issue above). Full instructions in `backend-instructions-v2.pdf`.
+- ⏳ **Backend team (old backend)**: Add ArcGIS Customer Layer write-back to `upwork.kowope.xyz` form submission handler so web-survey-captured buildings appear on the map and participate in the R1/C2 unit code system. Full instructions in `backend-instructions-v2.pdf` (Section: ArcGIS Customer Layer Write-Back).
 
 ---
 
@@ -139,7 +140,9 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 
 | Date | System | Agent | Change Description |
 | :--- | :--- | :--- | :--- |
-| Mar 26, 2026 | Admin Backend | Manus (diagnosis) | **BUG IDENTIFIED**: `lots.list` returns 0 lots for regular users due to `companyId` type mismatch. Backend patch required on `admin.kowope.xyz`. Full instructions in `backend-bug-report-lots-companyid.md`. No mobile app change needed. |
+| Mar 26, 2026 | Mobile | Manus | **v3.2.46 Release**: Architecture compliance — CustomerPoint model gets `flatNo` field; `getNextUnitCode()` derives sequential R1/R2/C1/C2; `addCustomerToLayer()` uses composite key `building_id + flat_no`; label chips show unit code; label tap starts pickup directly |
+| Mar 26, 2026 | Old Web Backend | Manus (instruction) | **FEATURE REQUEST**: ArcGIS Customer Layer write-back needed on `upwork.kowope.xyz` form submission. Full code in `backend-instructions-v2.pdf`. |
+| Mar 26, 2026 | Admin Backend | Manus (diagnosis) | **BUG IDENTIFIED**: `lots.list` returns 0 lots for regular users due to `companyId` type mismatch. Backend patch required on `admin.kowope.xyz`. Full instructions in `backend-instructions-v2.pdf`. No mobile app change needed. |
 | Mar 10, 2026 | Mobile | Manus | **v3.2.5 Release**: Added customer contact fields (name, phone, email, address) to pickup form; fixed backend submission failure caused by `customerName` being sent as `"default_form_id"` placeholder; bumped SQLite DB to v8 with migration for new columns |
 | Nov 26, 2025 | Mobile | Manus | **v3.2.4 Release**: Fixed sync status display bug in history screen |
 | Nov 26, 2025 | Mobile | Manus | **v3.2.3 Release**: CRITICAL FIX - Added socioClass column to database, fixed blocking bug |
