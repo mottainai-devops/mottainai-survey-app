@@ -441,10 +441,11 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
         for (int ci = 0; ci < customers.length; ci++) {
           final customer = customers[ci];
-          // Show unit code (R1, C2…) if available, else fall back to display name
-          final labelText = (customer.flatNo != null && customer.flatNo!.isNotEmpty)
-              ? customer.flatNo!
-              : customer.displayName;
+          // Show customer/business name if available, else fall back to unit code (R1, C2…)
+          final labelText = customer.displayName.isNotEmpty &&
+                  customer.displayName != customer.buildingId
+              ? customer.displayName
+              : (customer.flatNo ?? customer.buildingId);
           if (labelText.isEmpty) continue;
 
           // Offset each chip slightly downward from the centroid (~5m per chip)

@@ -49,14 +49,20 @@ class CustomerPoint {
 
   /// The full customer name for display in lists and sheets.
   /// Prefers business_name; falls back to "first last"; falls back to buildingId.
+  /// Filters out known placeholder values ("esteemed customer", "None", etc.).
   String get displayName {
-    if (businessName != null && businessName!.trim().isNotEmpty) {
-      return businessName!.trim();
+    bool isValid(String? s) {
+      if (s == null || s.trim().isEmpty) return false;
+      const placeholders = {
+        'esteemed customer', 'none', 'null', 'n/a', 'na', 'unknown', '-'
+      };
+      return !placeholders.contains(s.trim().toLowerCase());
     }
+    if (isValid(businessName)) return businessName!.trim();
     final first = firstName?.trim() ?? '';
     final last = lastName?.trim() ?? '';
     final full = '$first $last'.trim();
-    if (full.isNotEmpty) return full;
+    if (isValid(full)) return full;
     return buildingId;
   }
 
