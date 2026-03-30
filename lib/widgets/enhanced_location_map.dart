@@ -412,13 +412,13 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       final Color borderColor;
 
       if (isSelected) {
-        fillColor = Colors.blue.withValues(alpha: 0.45);
+        fillColor = Colors.blue.withOpacity(0.45);
         borderColor = Colors.blue.shade700;
       } else if (hasCustomers) {
-        fillColor = Colors.green.withValues(alpha: 0.30);
+        fillColor = Colors.green.withOpacity(0.30);
         borderColor = Colors.green.shade700;
       } else {
-        fillColor = Colors.orange.withValues(alpha: 0.30);
+        fillColor = Colors.orange.withOpacity(0.30);
         borderColor = Colors.orange.shade700;
       }
 
@@ -490,7 +490,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                   border: Border.all(color: Colors.white, width: 1.5),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
+                      color: Colors.black.withOpacity(0.3),
                       blurRadius: 3,
                       offset: const Offset(0, 1),
                     ),

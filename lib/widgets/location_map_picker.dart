@@ -286,7 +286,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
                             height: 30,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.3),
+                                color: Colors.blue.withOpacity(0.3),
                                 shape: BoxShape.circle,
                                 border: Border.all(color: Colors.blue, width: 2),
                               ),
@@ -332,7 +332,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.9),
+                      color: Colors.white.withOpacity(0.9),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Text(
