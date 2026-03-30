@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 13,
+      version: 14,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -60,7 +60,8 @@ class DatabaseHelper {
       companyName $textNullable,
       lotCode $textNullable,
       lotName $textNullable,
-      socioClass $textNullable
+      socioClass $textNullable,
+      arcgisBuildingId $textNullable
     )
     ''');
 
@@ -88,6 +89,16 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // v14: Add arcgisBuildingId column to pickups table.
+    if (oldVersion < 14) {
+      try {
+        await db.execute('ALTER TABLE pickups ADD COLUMN arcgisBuildingId TEXT');
+        print('v14 migration: added arcgisBuildingId column to pickups');
+      } catch (e) {
+        print('arcgisBuildingId column may already exist: $e');
+      }
+    }
+
     // v13: Add PRIMARY KEY to buildingId so INSERT OR REPLACE works correctly.
     // This requires recreating the table.
     if (oldVersion < 13) {

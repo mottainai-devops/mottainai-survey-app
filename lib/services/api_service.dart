@@ -161,6 +161,10 @@ class ApiService {
       if (pickup.lotName != null) {
         request.fields['lotName'] = pickup.lotName!;
       }
+      // ArcGIS Footprint Polygon building_id — added v3.3.0
+      if (pickup.arcgisBuildingId != null && pickup.arcgisBuildingId!.isNotEmpty) {
+        request.fields['arcgisBuildingId'] = pickup.arcgisBuildingId!;
+      }
 
       // Add photo files
       request.files.add(await http.MultipartFile.fromPath(

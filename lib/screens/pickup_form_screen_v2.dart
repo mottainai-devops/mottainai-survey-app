@@ -469,6 +469,10 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
         lotCode: _selectedLot?.lotCode,
         lotName: _selectedLot?.lotName,
         socioClass: _customerType == 'Residential' ? _socioClass : null,
+        // arcgisBuildingId = ArcGIS Footprint Polygon building_id — added v3.3.0
+        arcgisBuildingId: _buildingIdController.text.trim().isNotEmpty
+            ? _buildingIdController.text.trim()
+            : null,
       );
 
       // Save to local database
