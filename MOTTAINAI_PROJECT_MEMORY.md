@@ -1,7 +1,7 @@
 # Mottainai Project - Complete Memory & Workflow Documentation
 
 **Project Owner**: mottainaisurvey  
-**Last Updated**: November 20, 2025  
+**Last Updated**: March 30, 2026  
 **Status**: Production Active
 
 ---
@@ -15,7 +15,11 @@
 
 **Production URL**: https://admin.kowope.xyz  
 **Production Server**: 172.232.24.180 (root access)  
-**Server Password**: `Shams117@@@@`
+**Server Password (root)**: `Shams117@@@@`  
+**Server Password (alt)**: `1muser123456@A`  
+**Backend App URL**: https://upwork.kowope.xyz (port 3003, PM2: `mottainai-backend`)  
+**Admin Dashboard URL**: https://admin.kowope.xyz (port 3005, PM2: `mottainai-dashboard`)  
+**APK Distribution**: https://upwork.kowope.xyz/{filename}.apk (served from `/var/www/html/`)
 
 ---
 
@@ -325,8 +329,14 @@ db.users.updateOne(
 ```
 
 ### Issue: Login fails with "FormatException: Unexpected character"
-**Cause**: API returning HTML instead of JSON  
-**Solution**: Check backend is running and `/api/mobile/users/login` endpoint exists
+**Cause**: API returning HTML instead of JSON — usually a Nginx routing gap (a path not covered by any location block falls through to the catch-all which proxies to port 3000, which is down)  
+**Solution**: Check the active Nginx config at `/etc/nginx/sites-enabled/upwork.kowope.xyz` and ensure the failing path has a `location` block pointing to port 3003. Then `nginx -t && nginx -s reload`.
+
+### Issue: `/api/trpc/lots.list` returns 404 or empty lots
+**Cause 1**: Nginx `/api/trpc` block on `admin.kowope.xyz` missing or pointing to wrong port  
+**Cause 2**: `mottainai-dashboard` process not running with correct `JWT_SECRET`  
+**Cause 3**: `jwtToken.js` on `upwork.kowope.xyz` backend using wrong secret  
+**Solution**: Ensure `admin.kowope.xyz` Nginx has `location /api/trpc { proxy_pass http://localhost:3005; }`. Restart dashboard with `JWT_SECRET=mottainai-secret-key-2025`. Ensure `jwtToken.js` uses `process.env.JWT_SECRET || 'mottainai-secret-key-change-in-production'`.
 
 ### Issue: PM2 process not starting
 **Cause**: MongoDB connection failed or port already in use  
@@ -345,7 +355,23 @@ pm2 save
 
 ## 📝 Version History
 
-### v2.9.5 (Current - November 20, 2025)
+### v3.3.0 (Mobile App — March 30, 2026)
+- ✅ Added `arcgisBuildingId` field to `PickupSubmission` model (sent to backend in `/forms/submit`)
+- ✅ SQLite schema bumped to v14 with `arcgisBuildingId TEXT` migration
+- ✅ Flutter `withOpacity()` compatibility fix (replaced `withValues(alpha:)` calls)
+- ✅ APK: `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.0.apk` (24.2 MB)
+
+### v2.3.0 (Backend — March 30, 2026)
+- ✅ `POST /customer/synchronize` — writes `lga_name`, `lga_code`, `state_code`, `ward_code`, `ward_name`, `Lat`, `Long` to ArcGIS Customer Layer
+- ✅ `POST /customer/triggerGeoBackfill` — bulk backfill endpoint for existing records
+- ✅ `customerData` model: added `arcgisBuildingId`, `lgaName`, `lgaCode`, `stateCode`, `country`, `wardCode`, `wardName`
+- ✅ `formSubmission` model: added `arcgisBuildingId`, `lotCode`, `lgaName`, `lgaCode`, `stateCode`, `country`, `wardCode`, `wardName`
+- ✅ `jwtToken.js` secret aligned with dashboard (`process.env.JWT_SECRET`)
+- ✅ Nginx routing fixed on `upwork.kowope.xyz`: `/users`, `/forms`, `/customer`, `/api/trpc`, `/api/mobile/users` all route to port 3003
+- ✅ Nginx routing fixed on `admin.kowope.xyz`: `/api/trpc` routes to port 3005
+- ✅ APK files served from `/var/www/html/` via Nginx `.apk` location block
+
+### v2.9.5 (Backend — November 20, 2025)
 - ✅ Fixed company name display in mobile app
 - ✅ Extract companies from lots API response
 - ✅ Updated OperationalLot model with companyId/companyName fields
@@ -572,5 +598,5 @@ All documentation is stored in `/home/ubuntu/` and GitHub repositories:
 
 **This document serves as the complete memory for the Mottainai project. Keep it updated with any significant changes to architecture, deployment, or workflows.**
 
-**Last Verified**: November 20, 2025  
+**Last Verified**: March 30, 2026  
 **Next Review**: When major changes occur or monthly

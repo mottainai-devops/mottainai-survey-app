@@ -2,6 +2,35 @@
 
 All notable changes to the Mottainai Survey App will be documented in this file.
 
+## [3.3.0] - 2026-03-30
+
+### Added
+
+- **`arcgisBuildingId` field** — `PickupSubmission` model now carries a dedicated `arcgisBuildingId` field (separate from `buildingId`) that is explicitly set to the ArcGIS Footprint Polygon `building_id` value selected on the map. This field is sent to the backend in the multipart POST to `/forms/submit`, satisfying the backend geographic enrichment requirement.
+- **SQLite schema v14** — Added `arcgisBuildingId TEXT` column to the `pickups` table with a backward-compatible `ALTER TABLE` migration.
+
+### Fixed
+
+- **Flutter compatibility** — Replaced all `Color.withValues(alpha: x)` calls (Flutter 3.27+ API) with `Color.withOpacity(x)` in `enhanced_location_map.dart` and `location_map_picker.dart` to restore compatibility with the build server's Flutter version.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `lib/models/pickup_submission.dart` | Added `arcgisBuildingId` to class, constructor, `toMap()`, `toJson()`, `fromMap()`, `copyWith()` |
+| `lib/services/api_service.dart` | Sends `arcgisBuildingId` in the multipart POST body |
+| `lib/screens/pickup_form_screen_v2.dart` | Populates `arcgisBuildingId` from `_buildingIdController` |
+| `lib/database/database_helper.dart` | Schema v14 — `arcgisBuildingId TEXT` column + migration |
+| `lib/widgets/enhanced_location_map.dart` | `withValues(alpha:)` → `withOpacity()` |
+| `lib/widgets/location_map_picker.dart` | `withValues(alpha:)` → `withOpacity()` |
+
+### APK
+
+- **Download:** `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.0.apk` (24.2 MB)
+- **Build method:** Flutter release build on production server (`/opt/flutter`)
+
+---
+
 ## [3.2.17] - 2026-03-10
 
 ### Fixed
@@ -200,6 +229,7 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 
 ## Version History
 
+- **v3.3.0** (Mar 30, 2026) - arcgisBuildingId field, Flutter compatibility fixes
 - **v3.2.8** (Mar 10, 2026) - Polygon coordinate projection fix
 - **v3.2.7** (Mar 10, 2026) - ArcGIS connection abort fix (pagination + 500m radius)
 - **v3.2.6** (Mar 10, 2026) - ArcGIS invalid query parameters fix (inSR=4326)

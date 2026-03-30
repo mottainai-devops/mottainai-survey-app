@@ -2,7 +2,7 @@
 
 # Integration State & API Contract
 
-**Last Updated**: March 26, 2026
+**Last Updated**: March 30, 2026
 
 ---
 
@@ -10,10 +10,10 @@
 
 | Component | Version | Last Updated | Key Details |
 | :--- | :--- | :--- | :--- |
-| 📱 **Mobile App** | `v3.2.46` | Mar 26, 2026 | Architecture compliance: unit code (R1/C2) labels, composite key upsert, direct pickup from label tap |
-| ☁️ **Backend (old)** | `v2.2.0` | Nov 25, 2025 | Login/submit API URL: `https://upwork.kowope.xyz` |
-| 🖥️ **Admin Dashboard Backend** | `v1.x` | Mar 26, 2026 | Lots API URL: `https://admin.kowope.xyz` — **PATCH REQUIRED (see Section 3)** |
-| 🗃️ **Database** | `v8` (SQLite) | Mar 10, 2026 | `customerName`, `customerPhone`, `customerEmail`, `customerAddress` columns added to `pickups` |
+| 📱 **Mobile App** | `v3.3.0` | Mar 30, 2026 | `arcgisBuildingId` field added; SQLite DB v14; Flutter compat fixes |
+| ☁️ **Backend (old)** | `v2.3.0` | Mar 30, 2026 | Login/submit API URL: `https://upwork.kowope.xyz`; geographic fields + ArcGIS write-back added |
+| 🖥️ **Admin Dashboard Backend** | `v1.x` | Mar 30, 2026 | Lots API URL: `https://admin.kowope.xyz` — Nginx `/api/trpc` block fixed; JWT secret aligned |
+| 🗃️ **Database** | `v14` (SQLite) | Mar 30, 2026 | `arcgisBuildingId` column added to `pickups` table |
 
 ---
 
@@ -49,7 +49,15 @@ The mobile app sends a JSON object with the following structure and data types:
   "longitude": "double",
   "createdAt": "string",
   "companyId": "string?",
-  "companyName": "string?"
+  "companyName": "string?",
+  "arcgisBuildingId": "string?",
+  "lotCode": "string?",
+  "lgaName": "string?",
+  "lgaCode": "string?",
+  "stateCode": "string?",
+  "country": "string?",
+  "wardCode": "string?",
+  "wardName": "string?"
 }
 ```
 
@@ -74,7 +82,7 @@ The mobile app sends a JSON object with the following structure and data types:
 
 ### Current Issues
 
-#### 🔴 OPEN — `lots.list` returns 0 lots for all regular users (Mar 26, 2026)
+#### ✅ RESOLVED (Mar 30, 2026) — `lots.list` now returns correct lots for all users
 
 **Symptom:** All regular (non-admin, non-cherry-picker) users see "No operational lots available for your account" on the New Pickup screen. Admin and cherry-picker accounts are unaffected.
 
@@ -111,11 +119,12 @@ filteredLots = allLots.filter(lot =>
 );
 ```
 
-**After fix:** Rebuild backend bundle and restart PM2 (`pm2 restart mottainai-dashboard`). No mobile app rebuild required.
+**Resolution applied (Mar 30, 2026):** The root cause was not the `companyId` type mismatch but a combination of: (1) `admin.kowope.xyz` Nginx had no `/api/trpc` location block — requests returned `{"error":"Route not found"}`; (2) `mottainai-dashboard` process was not picking up `JWT_SECRET` from `ecosystem.config.js`, so tokens from `upwork.kowope.xyz` backend were rejected; (3) `jwtToken.js` on the backend used a hardcoded secret `'sjdhasjkdhaskj'` instead of `process.env.JWT_SECRET`. All three issues fixed. No mobile app rebuild required.
 
-**Verification curl** (should return non-empty lots after fix):
+**Verification:**
 ```bash
 curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B%22json%22%3A%7B%22userId%22%3A%226622b0d1f9f81b0481c7e99f%22%7D%7D%7D'
+# Returns: LOT-6: G R A (Ikeja) with userRole: "user"
 ```
 
 ---
@@ -131,8 +140,8 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 
 ### Pending Changes
 
-- ⏳ **Backend team**: Apply `lots.list` companyId fix to `admin.kowope.xyz` (see open issue above). Full instructions in `backend-instructions-v2.pdf`.
-- ⏳ **Backend team (old backend)**: Add ArcGIS Customer Layer write-back to `upwork.kowope.xyz` form submission handler so web-survey-captured buildings appear on the map and participate in the R1/C2 unit code system. Full instructions in `backend-instructions-v2.pdf` (Section: ArcGIS Customer Layer Write-Back).
+- ✅ **RESOLVED (2026-03-30)**: `lots.list` now works for all users on `admin.kowope.xyz`. See resolution details above.
+- ✅ **RESOLVED (2026-03-30)**: ArcGIS Customer Layer write-back implemented on `upwork.kowope.xyz`. `POST /customer/synchronize` writes `lga_name`, `lga_code`, `state_code`, `ward_code`, `ward_name`, `Lat`, `Long` to ArcGIS Customer Layer. Geographic fields added to `customerData` and `formSubmission` MongoDB models.
 
 ---
 
@@ -140,6 +149,9 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 
 | Date | System | Agent | Change Description |
 | :--- | :--- | :--- | :--- |
+| Mar 30, 2026 | Mobile | Manus | **v3.3.0 Release**: Added `arcgisBuildingId` field to `PickupSubmission`; SQLite DB v14 migration; Flutter `withOpacity()` compat fix; APK at `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.0.apk` |
+| Mar 30, 2026 | Old Web Backend | Manus | **v2.3.0 Release**: `POST /customer/synchronize` + `POST /customer/triggerGeoBackfill` endpoints live; `customerData` + `formSubmission` models updated with 7/8 geographic fields; `jwtToken.js` secret aligned with dashboard; Nginx routing fixed for `/users`, `/forms`, `/customer`, `/api/trpc` on both `upwork.kowope.xyz` and `admin.kowope.xyz` |
+| Mar 30, 2026 | Admin Dashboard Backend | Manus | **Nginx fix**: Added `/api/trpc → port 3005` location block to `admin.kowope.xyz`; restarted `mottainai-dashboard` with correct `JWT_SECRET=mottainai-secret-key-2025` |
 | Mar 26, 2026 | Mobile | Manus | **v3.2.46 Release**: Architecture compliance — CustomerPoint model gets `flatNo` field; `getNextUnitCode()` derives sequential R1/R2/C1/C2; `addCustomerToLayer()` uses composite key `building_id + flat_no`; label chips show unit code; label tap starts pickup directly |
 | Mar 26, 2026 | Old Web Backend | Manus (instruction) | **FEATURE REQUEST**: ArcGIS Customer Layer write-back needed on `upwork.kowope.xyz` form submission. Full code in `backend-instructions-v2.pdf`. |
 | Mar 26, 2026 | Admin Backend | Manus (diagnosis) | **BUG IDENTIFIED**: `lots.list` returns 0 lots for regular users due to `companyId` type mismatch. Backend patch required on `admin.kowope.xyz`. Full instructions in `backend-instructions-v2.pdf`. No mobile app change needed. |
