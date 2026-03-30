@@ -165,3 +165,59 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 | Nov 25, 2025 | Mobile | Manus | **v3.1.1 Release**: Fixed companyId submission (uses user's companyId), enables Company filter in admin dashboard |
 | Nov 25, 2025 | Mobile | Manus | **v3.1.0 Release**: Updated API URL to https://upwork.kowope.xyz, added socioClass field for residential customers, photo upload via multipart/form-data, removed loading blocker |
 | Nov 24, 2025 | Mobile | Manus | **v3.0.0 Release**: Fixed zoom level, tap behavior, placeholder text, and read-only date field |
+
+---
+
+## 5. Backend Developer Summation — March 30, 2026
+
+> **Source document:** `BackendDeveloperCoordinationNotification.md` (uploaded by backend developer, March 30, 2026)
+
+The backend developer confirmed the following server-side changes were made during their session. These are recorded here so the frontend team has a complete picture of what changed on the live server.
+
+### 5.1 Admin Dashboard Server-Side Changes (port 3005, `/var/www/mottainai-dashboard/`)
+
+| File | Change | Impact on Frontend |
+|------|--------|--------------------|
+| `server/models/Customer.ts` | 7 geographic fields added (`arcgisBuildingId`, `lgaName`, `lgaCode`, `stateCode`, `country`, `wardCode`, `wardName`) | Update local `Customer` interface in `Customers.tsx` |
+| `server/models/FormSubmission.ts` | 8 geographic fields added (same 7 + `lotCode`) | Update local pickup/submission interface in `PickupRecords.tsx` |
+| `server/routers/pickups.ts` | Pickup transformer now returns all 7 geographic fields; `null` for historical records — **no breaking change** | Add `lgaName`, `wardName`, `lotCode` columns to `PickupRecords.tsx` table |
+| `server/routers/propertyEnumeration.ts` | `triggerGeoBackfill` mutation: 3 broken template literals restored (bash heredoc substitution bug from prior deploy) | Wire to a button in `QATools.tsx` or `SystemTesting.tsx` |
+| `client/src/pages/Customers.tsx` | Geographic Information card added to customer detail dialog | Verify card renders correctly after next rebuild |
+
+### 5.2 PM2 Process Status (Confirmed March 30, 2026)
+
+| Process | Port | PID | JWT_SECRET | Status |
+|---------|------|-----|-----------|--------|
+| `mottainai-dashboard` | 3005 | 3171619 | `mottainai-secret-key-2025` | ✅ Online |
+| `mottainai-backend` | 3003 | 3165596 | `mottainai-secret-key-2025` | ✅ Online |
+
+### 5.3 Files Confirmed NOT Modified by Backend Team
+
+The backend developer explicitly confirmed the following were not touched — these remain under frontend ownership and their state is as left by the frontend team:
+
+- All Nginx configuration files (`/etc/nginx/sites-enabled/upwork.kowope.xyz`, `admin.kowope.xyz`)
+- `mottainai-backend` source code at `/var/www/upwork.kowope.xyz/`
+- All API endpoint URLs, methods, and response shapes
+- MongoDB schema (no new collections or indexes)
+- ArcGIS Footprint Polygon Layer (read-only during session)
+- Survey App APK (`mottainai-survey-app-v3.3.0.apk`)
+- Property Enumeration App APK (`PropertyEnumeration-v1.58.3.apk`)
+
+### 5.4 Frontend Actions Required (from Backend Summation)
+
+| Priority | App | Action | Status |
+|----------|-----|--------|--------|
+| ⚠️ High | Admin Dashboard | Update local `Customer` TypeScript interface with 7 new geographic fields | ⏳ Pending |
+| ⚠️ High | Admin Dashboard | Update local `FormSubmission`/pickup TypeScript interface with 8 new fields | ⏳ Pending |
+| ⚠️ High | Admin Dashboard | Add geographic columns (`lgaName`, `wardName`, `lotCode`) to `PickupRecords.tsx` table | ⏳ Pending |
+| ⚠️ High | Admin Dashboard | Verify `Customers.tsx` Geographic Information card renders correctly after rebuild | ⏳ Pending |
+| Medium | Admin Dashboard | Wire `triggerGeoBackfill` mutation to a button in `QATools.tsx` or `SystemTesting.tsx` | ⏳ Pending |
+| Low | Property Enumeration App | No changes required — `arcgisService.ts` benefits automatically from expanded Customer Layer | ✅ No action needed |
+| Low | Survey App | No changes required — v3.3.0 is current and all fields are being sent | ✅ No action needed |
+
+### 5.5 Change Log Additions (from Backend Summation)
+
+| Date | System | Agent | Change Description |
+|------|--------|-------|-------------------|
+| Mar 30, 2026 | Admin Dashboard Backend | Backend Developer | **Dashboard model update**: `Customer.ts` + `FormSubmission.ts` geographic fields added; `pickups.ts` transformer updated; `triggerGeoBackfill` template literals fixed; `Customers.tsx` geographic card added |
+| Mar 30, 2026 | Admin Dashboard Backend | Backend Developer | **PM2 restart**: Both `mottainai-dashboard` (port 3005) and `mottainai-backend` (port 3003) confirmed online with `JWT_SECRET=mottainai-secret-key-2025` |
