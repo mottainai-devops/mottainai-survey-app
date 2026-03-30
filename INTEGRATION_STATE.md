@@ -207,11 +207,11 @@ The backend developer explicitly confirmed the following were not touched — th
 
 | Priority | App | Action | Status |
 |----------|-----|--------|--------|
-| ⚠️ High | Admin Dashboard | Update local `Customer` TypeScript interface with 7 new geographic fields | ⏳ Pending |
-| ⚠️ High | Admin Dashboard | Update local `FormSubmission`/pickup TypeScript interface with 8 new fields | ⏳ Pending |
-| ⚠️ High | Admin Dashboard | Add geographic columns (`lgaName`, `wardName`, `lotCode`) to `PickupRecords.tsx` table | ⏳ Pending |
-| ⚠️ High | Admin Dashboard | Verify `Customers.tsx` Geographic Information card renders correctly after rebuild | ⏳ Pending |
-| Medium | Admin Dashboard | Wire `triggerGeoBackfill` mutation to a button in `QATools.tsx` or `SystemTesting.tsx` | ⏳ Pending |
+| ⚠️ High | Admin Dashboard | Update local `Customer` TypeScript interface with 7 new geographic fields | ✅ Complete (already present in live `Customers.tsx`) |
+| ⚠️ High | Admin Dashboard | Update local `FormSubmission`/pickup TypeScript interface with 8 new fields | ✅ Complete (all 8 fields returned by `pickups.ts` transformer) |
+| ⚠️ High | Admin Dashboard | Add geographic columns (`lgaName`, `wardName`, `lotCode`) to `PickupRecords.tsx` table | ✅ Complete (LGA + Ward columns added; Lot column updated to use `lotCode` field) |
+| ⚠️ High | Admin Dashboard | Verify `Customers.tsx` Geographic Information card renders correctly after rebuild | ✅ Complete (card verified in live code; dashboard rebuilt and redeployed) |
+| Medium | Admin Dashboard | Wire `triggerGeoBackfill` mutation to a button in `QATools.tsx` or `SystemTesting.tsx` | ✅ Complete (Geographic Backfill card added to `QATools.tsx` with batch size control and result display) |
 | Low | Property Enumeration App | No changes required — `arcgisService.ts` benefits automatically from expanded Customer Layer | ✅ No action needed |
 | Low | Survey App | No changes required — v3.3.0 is current and all fields are being sent | ✅ No action needed |
 
@@ -221,3 +221,4 @@ The backend developer explicitly confirmed the following were not touched — th
 |------|--------|-------|-------------------|
 | Mar 30, 2026 | Admin Dashboard Backend | Backend Developer | **Dashboard model update**: `Customer.ts` + `FormSubmission.ts` geographic fields added; `pickups.ts` transformer updated; `triggerGeoBackfill` template literals fixed; `Customers.tsx` geographic card added |
 | Mar 30, 2026 | Admin Dashboard Backend | Backend Developer | **PM2 restart**: Both `mottainai-dashboard` (port 3005) and `mottainai-backend` (port 3003) confirmed online with `JWT_SECRET=mottainai-secret-key-2025` |
+| Mar 30, 2026 | Admin Dashboard Frontend | Manus | **Frontend updates complete**: Added LGA + Ward columns to `PickupRecords.tsx` table; updated Lot column to use dedicated `lotCode` field; added Geographic Backfill card to `QATools.tsx` with `trpc.propertyEnumeration.triggerGeoBackfill` mutation; registered `pickupsRouter`, `customersRouter`, `propertyEnumerationRouter` in `server/routers.ts`; added `getMongoDb()` helper to `mongodb.ts`; synced 8 previously untracked live pages + 5 server models + 11 server routers to GitHub; built and deployed to `admin.kowope.xyz` (PM2 process 6 restarted) |
