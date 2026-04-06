@@ -239,3 +239,20 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 - **v3.2.0** (Nov 26, 2025) - Company selection and PIN auth
 - **v3.1.0** (Nov 20, 2025) - QR scanner and GPS
 - **v3.0.0** (Nov 15, 2025) - Initial release
+
+## [3.3.1] - 2026-04-06
+### Fixed
+- **Login crash for users with null phone/fullName** — `User.fromJson()` was doing hard Dart type casts (`json['phone'] as String`) which threw `type 'Null' is not a subtype of type 'String' in type cast` for any user account that had a null `phone` or `fullName` field in the database. This was surfaced as "Network error: type 'Null' is not a subtype of type 'String' in type cast" in the app UI.
+  - Fixed by using null-safe casts with empty string fallbacks: `(json['phone'] as String?) ?? ''`
+  - Also handles both `'id'` and `'_id'` key variants in the user object
+  - Companion fix applied to the backend login endpoint (commit `8d03608` in `mottainai-platform-backend`) to sanitise null fields before sending
+
+### Files Changed
+| File | Change |
+|------|--------|
+| `lib/models/user.dart` | Null-safe casts for all String fields in `User.fromJson()` |
+
+### APK
+- **Download (CDN):** `https://files.manuscdn.com/user_upload_by_module/session_file/310519663145928210/IEZbdnRtImFfTkUY.apk`
+- **Build commit:** `50ccdea29f10ea2688efdab7ae9eb60cc81f3901`
+- **Build method:** GitHub Actions (Flutter 3.27.4, release fat APK)
