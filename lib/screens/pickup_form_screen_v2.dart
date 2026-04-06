@@ -464,8 +464,15 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
         latitude: _latitude,
         longitude: _longitude,
         createdAt: DateTime.now().toIso8601String(),
-        companyId: authProvider.user!.companyId ?? _selectedCompany?.companyId,
-        companyName: authProvider.user!.companyName ?? _selectedCompany?.companyName,
+        // Cherry pickers have no company assignment — their pickups are attributed
+        // to Mottainai (null companyId) regardless of which lot they operate on.
+        // Regular users fall back to the selected company from the lot dropdown.
+        companyId: authProvider.user!.role == 'cherry_picker'
+            ? null
+            : (authProvider.user!.companyId ?? _selectedCompany?.companyId),
+        companyName: authProvider.user!.role == 'cherry_picker'
+            ? 'Mottainai'
+            : (authProvider.user!.companyName ?? _selectedCompany?.companyName),
         lotCode: _selectedLot?.lotCode,
         lotName: _selectedLot?.lotName,
         socioClass: _customerType == 'Residential' ? _socioClass : null,
