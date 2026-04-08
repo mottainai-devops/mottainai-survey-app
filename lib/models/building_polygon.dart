@@ -80,12 +80,18 @@ class BuildingPolygon {
 
     return BuildingPolygon(
       buildingId: attributes['building_id']?.toString() ?? '',
-      businessName: attributes['business_name']?.toString(),
-      custPhone: attributes['cust_phone']?.toString(),
-      customerEmail: attributes['customer_email']?.toString(),
+      // business_name, cust_phone, customer_email are not in the new
+      // Nigeria_Building_Footprints layer — they come from the Customer Layer
+      // and are populated separately via fetchCustomerPointsForBuilding().
+      businessName: null,
+      custPhone: null,
+      customerEmail: null,
       address: attributes['address']?.toString(),
-      zone: attributes['Zone']?.toString(),
-      socioEconomicGroups: attributes['socio_economic_groups']?.toString(),
+      // Zone and socio_economic_groups were removed from the new footprint
+      // layer (2026-04-07). They remain in the Customer Layer and are read
+      // via getSocioEconomicClass() when a building is selected on the map.
+      zone: null,
+      socioEconomicGroups: null,
       geometry: jsonEncode(wgs84Geometry),
       centerLat: centerLat,
       centerLon: centerLon,

@@ -7,8 +7,14 @@ import '../models/customer_point.dart';
 ///
 /// Two authoritative layers:
 ///   Footprint Layer — building polygon geometries (primary record)
+///                     Nigeria_Building_Footprints (updated 2026-04-07)
 ///   Customer Layer  — customer point features, one per unit
 ///                     composite key: building_id + flat_no (R1, R2, C1, C2…)
+///
+/// Field changes in the new footprint layer vs old (New_Footprints_gdb_b1422):
+///   Renamed: Validation → Verification, Validated_By → Source
+///   Removed: Zone, Z_Name, socio_economic_groups, address2, google_address2,
+///            V_Date, Validation, Validated_By, and many legacy fields
 ///
 /// All reads come from here; all new customer writes go back here to keep
 /// the map labels live and consistent.
@@ -17,7 +23,7 @@ class ArcGISService {
 
   static const String _footprintUrl =
       'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services'
-      '/New_Footprints_gdb_b1422/FeatureServer/0';
+      '/Nigeria_Building_Footprints/FeatureServer/0';
 
   static const String _customerUrl =
       'https://services3.arcgis.com/VYBpf26AGQNwssLH/arcgis/rest/services'
@@ -61,7 +67,7 @@ class ArcGISService {
       'geometryType': 'esriGeometryEnvelope',
       'inSR': '4326',
       'spatialRel': 'esriSpatialRelIntersects',
-      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'outFields': 'building_id,house_name,house_no,street_name,address,Verification,Source',
       'returnGeometry': 'true',
       'outSR': '4326',
       'resultRecordCount': _maxPolygonsPerQuery.toString(),
@@ -107,7 +113,7 @@ class ArcGISService {
       'spatialRel': 'esriSpatialRelIntersects',
       'distance': radiusMeters.toString(),
       'units': 'esriSRUnit_Meter',
-      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'outFields': 'building_id,house_name,house_no,street_name,address,Verification,Source',
       'returnGeometry': 'true',
       'outSR': '4326',
       'resultRecordCount': _maxPolygonsPerQuery.toString(),
@@ -137,7 +143,7 @@ class ArcGISService {
   Future<BuildingPolygon?> fetchPolygonByBuildingId(String buildingId) async {
     final params = {
       'where': "building_id='${_escapeSql(buildingId)}'",
-      'outFields': 'building_id,house_name,house_no,street_name,address2,google_address2,Z_Name,Zone',
+      'outFields': 'building_id,house_name,house_no,street_name,address,Verification,Source',
       'returnGeometry': 'true',
       'outSR': '4326',
       'f': 'json',
@@ -393,30 +399,39 @@ class ArcGISService {
 
   // ─── Socio-economic helper ────────────────────────────────────────────────────
 
-  /// Get socio-economic class for a building from the footprint layer.
+  /// Get socio-economic class for a building from the Customer Layer.
+  ///
+  /// The `socio_economic_groups` field was removed from the new
+  /// Nigeria_Building_Footprints layer (updated 2026-04-07). We now read it
+  /// from the Customer Layer (`Customer_Layer_gdb`) instead, which still
+  /// carries the field. If the building has been previously surveyed and a
+  /// customer record exists, this returns the stored class ('low', 'medium',
+  /// or 'high'). Returns null if no customer record exists for the building
+  /// or if the field is empty — in that case the field worker selects manually.
   Future<String?> getSocioEconomicClass(String buildingId) async {
     try {
       final params = {
         'where': "building_id='${_escapeSql(buildingId)}'",
         'outFields': 'socio_economic_groups',
         'returnGeometry': 'false',
+        'resultRecordCount': '1',
         'f': 'json',
       };
 
-      final data = await _postQuery('$_footprintUrl/query', params);
+      final data = await _postQuery('$_customerUrl/query', params);
       final features = data['features'] as List<dynamic>? ?? [];
       if (features.isEmpty) return null;
 
       final attrs = features[0]['attributes'] as Map<String, dynamic>;
       final socioClass = attrs['socio_economic_groups']?.toString();
-      if (socioClass == null || socioClass.isEmpty) return null;
+      if (socioClass == null || socioClass.trim().isEmpty) return null;
 
       final normalized = socioClass.toLowerCase().trim();
       return ['low', 'medium', 'high'].contains(normalized)
           ? normalized
           : null;
     } catch (e) {
-      print('[ArcGIS] getSocioEconomicClass error: $e');
+      print('[ArcGIS] getSocioEconomicClass (Customer Layer) error: $e');
       return null;
     }
   }

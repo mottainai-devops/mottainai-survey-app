@@ -240,6 +240,26 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 - **v3.1.0** (Nov 20, 2025) - QR scanner and GPS
 - **v3.0.0** (Nov 15, 2025) - Initial release
 
+## [3.3.3] - 2026-04-08
+
+### Fixed
+- **ArcGIS polygon loading broken after layer migration (CRITICAL)**: Building polygons failed to load with "Cannot perform query. Invalid query parameters." after the footprint layer was replaced with `Nigeria_Building_Footprints` on 2026-04-07.
+  - Root cause: `outFields` in all four footprint queries referenced fields that no longer exist in the new layer (`Zone`, `Z_Name`, `address2`, `google_address2`), causing ArcGIS to reject the entire query.
+  - Fix: Removed all non-existent fields from `outFields`. New `outFields`: `building_id,house_name,house_no,street_name,address,Verification,Source`.
+- **Layer URL updated**: `_footprintUrl` now points to `Nigeria_Building_Footprints` (was `New_Footprints_gdb_b1422`).
+- **Socio-economic class auto-fill re-wired to Customer Layer**: The `socio_economic_groups` field was removed from the new footprint layer. `getSocioEconomicClass()` now queries the Customer Layer (`Customer_Layer_gdb`) instead, which still carries the field. Auto-fill works for any building that has been previously surveyed and has a customer record.
+- **`BuildingPolygon.fromArcGIS()` updated**: `zone`, `socioEconomicGroups`, `businessName`, `custPhone`, `customerEmail` are no longer read from the footprint layer (those fields are gone or were never in the footprint layer). They are populated separately from the Customer Layer.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `lib/services/arcgis_service.dart` | Layer URL updated; all 4 `outFields` strings fixed; `getSocioEconomicClass()` re-wired to Customer Layer |
+| `lib/models/building_polygon.dart` | `fromArcGIS()` updated — `zone`, `socioEconomicGroups`, `businessName`, `custPhone`, `customerEmail` set to null (not in new footprint layer) |
+| `pubspec.yaml` | Version bumped to 3.3.3+1 |
+
+---
+
 ## [3.3.1] - 2026-04-06
 ### Fixed
 - **Login crash for users with null phone/fullName** — `User.fromJson()` was doing hard Dart type casts (`json['phone'] as String`) which threw `type 'Null' is not a subtype of type 'String' in type cast` for any user account that had a null `phone` or `fullName` field in the database. This was surfaced as "Network error: type 'Null' is not a subtype of type 'String' in type cast" in the app UI.
