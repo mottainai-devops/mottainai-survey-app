@@ -404,17 +404,28 @@ class ArcGISService {
   /// The `socio_economic_groups` field was removed from the new
   /// Nigeria_Building_Footprints layer (updated 2026-04-07). We now read it
   /// from the Customer Layer (`Customer_Layer_gdb`) instead, which still
-  /// carries the field. If the building has been previously surveyed and a
-  /// customer record exists, this returns the stored class ('low', 'medium',
-  /// or 'high'). Returns null if no customer record exists for the building
-  /// or if the field is empty — in that case the field worker selects manually.
+  /// carries the field.
+  ///
+  /// Strategy: query ALL units in the building (all flat_no values for this
+  /// building_id), collect every non-null socio_economic_groups value, and
+  /// return the most frequently occurring class. This handles multi-unit
+  /// buildings correctly — all units in the same building share the same
+  /// socio-economic classification in practice, but if there is any
+  /// inconsistency we use the majority vote. Falls back to the most recently
+  /// added record if all counts are equal.
+  ///
+  /// Returns null if no customer record exists for the building or if no
+  /// unit has a socio class set — in that case the field worker selects manually.
   Future<String?> getSocioEconomicClass(String buildingId) async {
     try {
+      // Fetch all units for this building (up to 50 — buildings with more
+      // than 50 units are extremely rare; the majority vote still holds).
       final params = {
         'where': "building_id='${_escapeSql(buildingId)}'",
-        'outFields': 'socio_economic_groups',
+        'outFields': 'socio_economic_groups,flat_no,CreationDate',
         'returnGeometry': 'false',
-        'resultRecordCount': '1',
+        'resultRecordCount': '50',
+        'orderByFields': 'CreationDate DESC', // most recent first for tie-break
         'f': 'json',
       };
 
@@ -422,14 +433,26 @@ class ArcGISService {
       final features = data['features'] as List<dynamic>? ?? [];
       if (features.isEmpty) return null;
 
-      final attrs = features[0]['attributes'] as Map<String, dynamic>;
-      final socioClass = attrs['socio_economic_groups']?.toString();
-      if (socioClass == null || socioClass.trim().isEmpty) return null;
+      // Collect all valid socio class values
+      final counts = <String, int>{};
+      String? mostRecent;
+      for (final feature in features) {
+        final attrs = feature['attributes'] as Map<String, dynamic>;
+        final raw = attrs['socio_economic_groups']?.toString();
+        if (raw == null || raw.trim().isEmpty) continue;
+        final normalized = raw.toLowerCase().trim();
+        if (!['low', 'medium', 'high'].contains(normalized)) continue;
+        counts[normalized] = (counts[normalized] ?? 0) + 1;
+        mostRecent ??= normalized; // first entry is most recent (ordered DESC)
+      }
 
-      final normalized = socioClass.toLowerCase().trim();
-      return ['low', 'medium', 'high'].contains(normalized)
-          ? normalized
-          : null;
+      if (counts.isEmpty) return null;
+
+      // Return the majority class; use mostRecent as tie-breaker
+      final winner = counts.entries
+          .reduce((a, b) => a.value >= b.value ? a : b)
+          .key;
+      return winner;
     } catch (e) {
       print('[ArcGIS] getSocioEconomicClass (Customer Layer) error: $e');
       return null;

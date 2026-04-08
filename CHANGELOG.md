@@ -247,7 +247,7 @@ All notable changes to the Mottainai Survey App will be documented in this file.
   - Root cause: `outFields` in all four footprint queries referenced fields that no longer exist in the new layer (`Zone`, `Z_Name`, `address2`, `google_address2`), causing ArcGIS to reject the entire query.
   - Fix: Removed all non-existent fields from `outFields`. New `outFields`: `building_id,house_name,house_no,street_name,address,Verification,Source`.
 - **Layer URL updated**: `_footprintUrl` now points to `Nigeria_Building_Footprints` (was `New_Footprints_gdb_b1422`).
-- **Socio-economic class auto-fill re-wired to Customer Layer**: The `socio_economic_groups` field was removed from the new footprint layer. `getSocioEconomicClass()` now queries the Customer Layer (`Customer_Layer_gdb`) instead, which still carries the field. Auto-fill works for any building that has been previously surveyed and has a customer record.
+- **Socio-economic class auto-fill re-wired to Customer Layer**: The `socio_economic_groups` field was removed from the new footprint layer. `getSocioEconomicClass()` now queries the Customer Layer (`Customer_Layer_gdb`) instead, which still carries the field. Queries **all units** in the building (up to 50, ordered by `CreationDate DESC`) and returns the **majority-vote** socio class — correctly handles multi-unit buildings where multiple customer records share the same `building_id`. Falls back to manual selection if no customer record exists.
 - **`BuildingPolygon.fromArcGIS()` updated**: `zone`, `socioEconomicGroups`, `businessName`, `custPhone`, `customerEmail` are no longer read from the footprint layer (those fields are gone or were never in the footprint layer). They are populated separately from the Customer Layer.
 
 ### Files Changed
