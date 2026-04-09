@@ -123,8 +123,8 @@ class PickupSubmission {
   factory PickupSubmission.fromMap(Map<String, dynamic> map) {
     return PickupSubmission(
       id: map['id'] as int?,
-      formId: map['formId'] as String,
-      supervisorId: map['supervisorId'] as String,
+      formId: (map['formId'] as String?) ?? '',
+      supervisorId: (map['supervisorId'] as String?) ?? '',
       customerName: map['customerName'] as String? ?? '',
       customerPhone: map['customerPhone'] as String? ?? '',
       customerEmail: map['customerEmail'] as String? ?? '',

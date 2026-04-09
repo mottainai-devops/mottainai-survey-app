@@ -188,6 +188,17 @@ class DatabaseHelper {
     );
   }
 
+  /// Update supervisorId for a stuck submission so it can be retried
+  Future<int> updateSupervisorId(int id, String supervisorId) async {
+    final db = await instance.database;
+    return await db.update(
+      'pickups',
+      {'supervisorId': supervisorId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<int> deletePickup(int id) async {
     final db = await instance.database;
     return await db.delete(

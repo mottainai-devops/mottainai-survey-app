@@ -177,4 +177,10 @@ class SyncProvider with ChangeNotifier {
     await _dbHelper.deletePickup(id);
     await _loadUnsyncedCount();
   }
+
+  /// Update supervisorId for a stuck submission so it can be retried without starting over
+  Future<void> updateSupervisorId(int id, String supervisorId) async {
+    await _dbHelper.updateSupervisorId(id, supervisorId);
+    notifyListeners();
+  }
 }

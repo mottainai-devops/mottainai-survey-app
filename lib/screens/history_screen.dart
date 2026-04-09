@@ -250,18 +250,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   void _showPickupDetails(PickupSubmission pickup) {
+    final supervisorController = TextEditingController(text: pickup.supervisorId);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => DraggableScrollableSheet(
+      builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.9,
         minChildSize: 0.5,
         maxChildSize: 0.95,
         expand: false,
-        builder: (context, scrollController) {
+        builder: (ctx2, scrollController) {
           return SingleChildScrollView(
             controller: scrollController,
             padding: const EdgeInsets.all(24),
@@ -282,15 +283,85 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(ctx),
                     ),
                   ],
                 ),
                 const Divider(height: 32),
 
-                // Details
+                // Building ID
                 _buildDetailSection('Building ID', pickup.buildingId),
-                _buildDetailSection('Supervisor ID', pickup.supervisorId),
+
+                // Supervisor ID — editable for unsynced submissions, read-only for synced
+                if (pickup.synced == 0) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Supervisor ID',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: supervisorController,
+                                decoration: InputDecoration(
+                                  hintText: 'Enter supervisor ID',
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                style: const TextStyle(fontSize: 15),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () async {
+                                final newId = supervisorController.text.trim();
+                                if (newId.isEmpty) return;
+                                final syncProvider = Provider.of<SyncProvider>(ctx, listen: false);
+                                await syncProvider.updateSupervisorId(pickup.id!, newId);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                if (mounted) {
+                                  _loadHistory();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Supervisor ID saved — tap Sync to retry'),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                              ),
+                              child: const Text('Save'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  _buildDetailSection('Supervisor ID', pickup.supervisorId),
+                ],
+
                 _buildDetailSection('Customer Type', pickup.customerType),
                 _buildDetailSection('Bin Type', pickup.binType),
                 if (pickup.wheelieBinType != null)
@@ -298,7 +369,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 _buildDetailSection('Bin Quantity', '${pickup.binQuantity}'),
                 _buildDetailSection('Pick Up Date', pickup.pickUpDate),
                 if (pickup.latitude != null && pickup.longitude != null)
-                  _buildDetailSection('Location', 'Lat: ${pickup.latitude!.toStringAsFixed(6)}, Lon: ${pickup.longitude!.toStringAsFixed(6)}'),
+                  _buildDetailSection(
+                    'Location',
+                    'Lat: ${pickup.latitude!.toStringAsFixed(6)}, Lon: ${pickup.longitude!.toStringAsFixed(6)}',
+                  ),
                 if (pickup.incidentReport != null && pickup.incidentReport!.isNotEmpty)
                   _buildDetailSection('Incident Report', pickup.incidentReport!),
                 _buildDetailSection('Status', pickup.synced == 1 ? 'Synced' : 'Pending Sync'),
