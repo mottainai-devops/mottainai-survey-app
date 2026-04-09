@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/company.dart';
 
 class CompanyService {
-  static const String _baseUrl = 'http://172.232.24.180:3000';
+  static const String _baseUrl = 'https://upwork.kowope.xyz';
   static const String _cacheKey = 'cached_companies';
   static const String _cacheTimestampKey = 'companies_cache_timestamp';
   
@@ -79,7 +79,7 @@ class CompanyService {
       final cacheDate = DateTime.fromMillisecondsSinceEpoch(timestamp);
       final hoursSinceCache = DateTime.now().difference(cacheDate).inHours;
       
-      return hoursSinceCache > 24;
+      return hoursSinceCache > 1; // Refresh every hour to get latest webhook URLs
     } catch (e) {
       return true;
     }
