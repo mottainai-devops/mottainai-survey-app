@@ -43,7 +43,10 @@ jobs:
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d'+' -f1)
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/mottainai-survey-app-v${VERSION}-fat.apk
-          echo "APK renamed to mottainai-survey-app-v${VERSION}-fat.apk"
+          # Also copy as canonical download name (no -fat suffix)
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/mottainai-survey-app-v${VERSION}.apk
+          echo "APK_VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "APK renamed to mottainai-survey-app-v${VERSION}.apk"
       
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -69,3 +72,15 @@ jobs:
         with:
           name: build-info
           path: build-info.txt
+
+      - name: Deploy APK to production server
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/deploy_key \
+            build/app/outputs/flutter-apk/mottainai-survey-app-v${APK_VERSION}.apk \
+            root@${{ secrets.DEPLOY_HOST }}:/var/www/upwork.kowope.xyz/public/mottainai-survey-app-v${APK_VERSION}.apk
+          echo "APK deployed: mottainai-survey-app-v${APK_VERSION}.apk"
