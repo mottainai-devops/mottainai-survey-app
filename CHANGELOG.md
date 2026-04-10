@@ -229,6 +229,9 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 
 ## Version History
 
+- **v3.3.4** (Apr 10, 2026) - Issue C: building ID normalisation fix for customer labels
+- **v3.3.3** (Apr 8, 2026) - ArcGIS layer migration fix (Nigeria_Building_Footprints)
+- **v3.3.1** (Apr 6, 2026) - Login crash fix for null phone/fullName
 - **v3.3.0** (Mar 30, 2026) - arcgisBuildingId field, Flutter compatibility fixes
 - **v3.2.8** (Mar 10, 2026) - Polygon coordinate projection fix
 - **v3.2.7** (Mar 10, 2026) - ArcGIS connection abort fix (pagination + 500m radius)
@@ -239,6 +242,29 @@ All notable changes to the Mottainai Survey App will be documented in this file.
 - **v3.2.0** (Nov 26, 2025) - Company selection and PIN auth
 - **v3.1.0** (Nov 20, 2025) - QR scanner and GPS
 - **v3.0.0** (Nov 15, 2025) - Initial release
+
+## [3.3.4] - 2026-04-10
+
+### Fixed
+
+- **Issue C: Customer labels missing for captured buildings** — Green name-badge chips (e.g. "R1", "C2") failed to appear on buildings that had existing customer records in the ArcGIS Customer Layer.
+  - Root cause: Building ID format mismatch between the Footprint layer (`"9439 LASIKA06 006"` — with spaces) and the Customer Layer (`"9439LASIKA06006"` — no spaces). The exact-string lookup `_liveCustomers[pd.buildingId]` silently returned an empty list when the two formats differed.
+  - Fix: Added `_normBuildingId()` helper that strips all whitespace from a building ID. Applied at three points in `enhanced_location_map.dart`: (1) when populating `_liveCustomers` from the ArcGIS response (normalise map keys), (2) in `_renderPolygons()` when looking up customers for colour and label rendering, (3) in `_onPolygonTapped()` when looking up customers for the bottom sheet.
+  - Result: Green badges and customer name chips now display correctly for all buildings with existing records, regardless of which ID format ArcGIS returns.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `lib/widgets/enhanced_location_map.dart` | Added `_normBuildingId()` helper; normalised `_liveCustomers` map keys on population; normalised lookups in `_renderPolygons()` and `_onPolygonTapped()` |
+| `pubspec.yaml` | Version bumped to 3.3.4+1 |
+
+### APK
+
+- **Download:** `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.4.apk`
+- **Build method:** Flutter release build on production server (`/opt/flutter`)
+
+---
 
 ## [3.3.3] - 2026-04-08
 

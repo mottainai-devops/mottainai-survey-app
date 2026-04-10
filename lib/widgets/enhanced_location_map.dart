@@ -368,17 +368,31 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
 
   // ─── Fetch customers from ArcGIS Customer Layer ───────────────────────────────
 
+  /// Normalise a building ID for consistent map lookup.
+  /// Strips all whitespace so "9439 LASIKA06 006" == "9439LASIKA06006",
+  /// preventing label misses caused by format differences between the
+  /// Footprint layer and the Customer Layer.
+  String _normBuildingId(String id) => id.replaceAll(' ', '');
+
   Future<void> _fetchAndRenderCustomers(
       List<BuildingPolygon> polygons) async {
     if (polygons.isEmpty || !mounted) return;
 
     final ids = polygons.map((p) => p.buildingId).toList();
-    final customers = await _arcgis.fetchCustomersForBuildings(ids);
+    final rawCustomers = await _arcgis.fetchCustomersForBuildings(ids);
 
     if (!mounted) return;
 
+    // Normalise map keys so lookups succeed regardless of whether ArcGIS
+    // returns IDs with or without spaces (e.g. "9439 LASIKA06 006" vs
+    // "9439LASIKA06006").
+    final normalisedCustomers = <String, List<CustomerPoint>>{};
+    rawCustomers.forEach((key, value) {
+      normalisedCustomers[_normBuildingId(key)] = value;
+    });
+
     setState(() {
-      _liveCustomers = {..._liveCustomers, ...customers};
+      _liveCustomers = {..._liveCustomers, ...normalisedCustomers};
     });
 
     _renderPolygons(useBoundsFilter: _currentBounds != null);
@@ -401,7 +415,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
       }
 
       final isSelected = _selectedPolygon?.buildingId == pd.buildingId;
-      final customers = _liveCustomers[pd.buildingId] ?? [];
+      final customers = _liveCustomers[_normBuildingId(pd.buildingId)] ?? [];
       final hasCustomers = customers.isNotEmpty;
 
       // ── Colour logic ──────────────────────────────────────────────────────
@@ -671,7 +685,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
     _renderPolygons(useBoundsFilter: _currentBounds != null);
     widget.onLocationSelected(polygon.centerLat, polygon.centerLon);
 
-    final customers = _liveCustomers[polygon.buildingId] ?? [];
+    final customers = _liveCustomers[_normBuildingId(polygon.buildingId)] ?? [];
     _showBuildingSheet(polygon, customers);
   }
 
