@@ -2,7 +2,7 @@
 
 # Integration State & API Contract
 
-**Last Updated**: March 30, 2026
+**Last Updated**: April 10, 2026
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Component | Version | Last Updated | Key Details |
 | :--- | :--- | :--- | :--- |
-| 📱 **Mobile App** | `v3.3.3` | Apr 08, 2026 | New footprint layer (`Nigeria_Building_Footprints`); `outFields` fixed; socio-economic auto-fill re-wired to Customer Layer |
+| 📱 **Mobile App** | `v3.3.4` | Apr 10, 2026 | Building ID normalisation fix (`_normBuildingId` helper in `enhanced_location_map.dart`); defensive customer label matching for space/case mismatches between footprint and Customer Layer; APK at `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.4.apk` |
 | ☁️ **Backend (old)** | `v2.3.0` | Mar 30, 2026 | Login/submit API URL: `https://upwork.kowope.xyz`; geographic fields + ArcGIS write-back added |
 | 🖥️ **Admin Dashboard Backend** | `v1.x` | Mar 30, 2026 | Lots API URL: `https://admin.kowope.xyz` — Nginx `/api/trpc` block fixed; JWT secret aligned |
 | 🗃️ **Database** | `v14` (SQLite) | Mar 30, 2026 | `arcgisBuildingId` column added to `pickups` table |
@@ -149,6 +149,7 @@ curl 'https://admin.kowope.xyz/api/trpc/lots.list?batch=1&input=%7B%220%22%3A%7B
 
 | Date | System | Agent | Change Description |
 | :--- | :--- | :--- | :--- |
+| Apr 10, 2026 | Mobile | Manus | **v3.3.4 Release**: Applied Issue C fix — added `_normBuildingId()` helper to `enhanced_location_map.dart` that normalises building ID strings (uppercase + strip spaces) before map population and lookup. Ensures buildings captured via web form or Survey123 (where building_id may contain spaces) correctly match customer labels from the ArcGIS Customer Layer. APK deployed to `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.4.apk` (GitHub Actions run `24238196126`, commit `dc58b9f`). Issues A and B confirmed resolved in v3.2.17/v3.2.18 — no further action required. |
 | Apr 08, 2026 | Mobile | Manus | **v3.3.3 Release**: Updated `_footprintUrl` to `Nigeria_Building_Footprints` (new layer 2026-04-07); fixed all 4 `outFields` strings (removed `Zone`, `Z_Name`, `address2`, `google_address2`; renamed `Validation`→`Verification`, `Validated_By`→`Source`); re-wired `getSocioEconomicClass()` to query Customer Layer instead of removed footprint field; updated `BuildingPolygon.fromArcGIS()` |
 | Mar 30, 2026 | Mobile | Manus | **v3.3.0 Release**: Added `arcgisBuildingId` field to `PickupSubmission`; SQLite DB v14 migration; Flutter `withOpacity()` compat fix; APK at `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.0.apk` |
 | Mar 30, 2026 | Old Web Backend | Manus | **v2.3.0 Release**: `POST /customer/synchronize` + `POST /customer/triggerGeoBackfill` endpoints live; `customerData` + `formSubmission` models updated with 7/8 geographic fields; `jwtToken.js` secret aligned with dashboard; Nginx routing fixed for `/users`, `/forms`, `/customer`, `/api/trpc` on both `upwork.kowope.xyz` and `admin.kowope.xyz` |
@@ -201,7 +202,7 @@ The backend developer explicitly confirmed the following were not touched — th
 - All API endpoint URLs, methods, and response shapes
 - MongoDB schema (no new collections or indexes)
 - ArcGIS Footprint Polygon Layer (read-only during session)
-- Survey App APK (`mottainai-survey-app-v3.3.0.apk`)
+- Survey App APK (`mottainai-survey-app-v3.3.4.apk`) — `https://upwork.kowope.xyz/mottainai-survey-app-v3.3.4.apk`
 - Property Enumeration App APK (`PropertyEnumeration-v1.58.3.apk`)
 
 ### 5.4 Frontend Actions Required (from Backend Summation)
@@ -214,7 +215,7 @@ The backend developer explicitly confirmed the following were not touched — th
 | ⚠️ High | Admin Dashboard | Verify `Customers.tsx` Geographic Information card renders correctly after rebuild | ✅ Complete (card verified in live code; dashboard rebuilt and redeployed) |
 | Medium | Admin Dashboard | Wire `triggerGeoBackfill` mutation to a button in `QATools.tsx` or `SystemTesting.tsx` | ✅ Complete (Geographic Backfill card added to `QATools.tsx` with batch size control and result display) |
 | Low | Property Enumeration App | No changes required — `arcgisService.ts` benefits automatically from expanded Customer Layer | ✅ No action needed |
-| Low | Survey App | No changes required — v3.3.0 is current and all fields are being sent | ✅ No action needed |
+| Low | Survey App | No changes required — v3.3.4 is current and all fields are being sent | ✅ No action needed |
 
 ### 5.5 Change Log Additions (from Backend Summation)
 
