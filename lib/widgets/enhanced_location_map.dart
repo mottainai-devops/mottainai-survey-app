@@ -708,7 +708,10 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
           Navigator.pop(ctx);
           // Fill form with existing customer data
           if (widget.onBuildingSelected != null) {
-            // Pass a BuildingPolygon enriched with customer data
+            // Pass a BuildingPolygon enriched with customer data.
+            // selectedFlatNo carries the existing unit code (e.g. R1, C2) so
+            // the submit flow can update the existing ArcGIS record instead of
+            // inserting a new one (fixes duplicate customer creation bug).
             final enriched = BuildingPolygon(
               buildingId: polygon.buildingId,
               businessName: customer.businessName,
@@ -721,6 +724,7 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
               centerLat: polygon.centerLat,
               centerLon: polygon.centerLon,
               lastUpdated: polygon.lastUpdated,
+              selectedFlatNo: customer.flatNo,
             );
             widget.onBuildingSelected!(enriched);
           }

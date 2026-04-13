@@ -70,6 +70,10 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
   String? _customerZone;
   String? _socioEconomicGroup;
   BuildingPolygon? _selectedBuilding;
+  /// When an existing customer is selected from the building sheet, this holds
+  /// their unit code (flat_no, e.g. R1, C2). Used in _submitForm to update
+  /// the existing ArcGIS record instead of inserting a new one.
+  String? _selectedFlatNo;
   
   // Existing fields
   String _binType = '10 CBM SKIP BIN';
@@ -162,6 +166,10 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       _customerAddressController.text = polygon.address ?? '';
       _customerZone = polygon.zone;
       _socioEconomicGroup = polygon.socioEconomicGroups;
+      // Capture the existing customer's unit code (flat_no) if one was selected.
+      // When non-null, _submitForm will reuse this code to UPDATE the existing
+      // ArcGIS record rather than calling getNextUnitCode() and inserting a new one.
+      _selectedFlatNo = polygon.selectedFlatNo;
     });
 
     // Scroll down so the Building Information form fields are visible
@@ -489,21 +497,38 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       // ── Write customer to ArcGIS Customer Layer ──────────────────────────
       // Architecture: one Customer Layer point per unit, keyed by
       // building_id + flat_no (R1, R2, C1, C2…).
-      // Step 1: derive the next sequential unit code.
-      // Step 2: upsert the Customer Layer point with the composite key.
+      //
+      // Two paths:
+      //   A) Existing customer selected → reuse their flat_no (_selectedFlatNo)
+      //      so addCustomerToLayer() finds the existing record and UPDATES it.
+      //   B) New customer (ADD NEW CUSTOMER) → call getNextUnitCode() to assign
+      //      the next sequential code, then INSERT a new record.
+      //
       // Fire-and-forget so ArcGIS latency never blocks the user.
       final buildingId = _buildingIdController.text.trim();
       final lat = _latitude ?? _selectedBuilding?.centerLat ?? 0.0;
       final lon = _longitude ?? _selectedBuilding?.centerLon ?? 0.0;
       final customerTypeCode = _customerType == 'Residential' ? '1' : '2';
       if (buildingId.isNotEmpty && lat != 0.0 && lon != 0.0) {
-        _arcgisService
-            .getNextUnitCode(
-          buildingId: buildingId,
-          customerType: customerTypeCode,
-        )
-            .then((unitCode) {
-          debugPrint('[ArcGIS] Assigned unit code $unitCode for $buildingId');
+        // Capture _selectedFlatNo now (before any async gap resets it)
+        final existingFlatNo = _selectedFlatNo;
+
+        Future<String> unitCodeFuture;
+        if (existingFlatNo != null && existingFlatNo.isNotEmpty) {
+          // Path A: existing customer — reuse their unit code
+          debugPrint('[ArcGIS] Reusing existing flat_no=$existingFlatNo for $buildingId (update path)');
+          unitCodeFuture = Future.value(existingFlatNo);
+        } else {
+          // Path B: new customer — get next sequential unit code
+          unitCodeFuture = _arcgisService.getNextUnitCode(
+            buildingId: buildingId,
+            customerType: customerTypeCode,
+          );
+        }
+
+        unitCodeFuture.then((unitCode) {
+          debugPrint('[ArcGIS] Using unit code $unitCode for $buildingId '
+              '(${existingFlatNo != null ? "update" : "insert"} path)');
           return _arcgisService.addCustomerToLayer(
             buildingId: buildingId,
             lat: lat,

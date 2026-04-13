@@ -13,6 +13,10 @@ class BuildingPolygon {
   final double centerLon;
   final DateTime lastUpdated;
   final String? customerLabels; // e.g., "R1,R2,B1"
+  /// When an existing customer is selected from the building sheet, this holds
+  /// their unit code (flat_no, e.g. R1, C2). If set, the submit flow should
+  /// reuse this code instead of generating a new one via getNextUnitCode().
+  final String? selectedFlatNo;
 
   BuildingPolygon({
     required this.buildingId,
@@ -27,6 +31,7 @@ class BuildingPolygon {
     required this.centerLon,
     required this.lastUpdated,
     this.customerLabels,
+    this.selectedFlatNo,
   });
 
   /// Parse an ArcGIS Feature Service response feature.
