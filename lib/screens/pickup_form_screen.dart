@@ -31,7 +31,7 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
   final _customerEmailController = TextEditingController();
   final _customerAddressController = TextEditingController();
 
-  String _customerType = 'Residential';
+  String _customerType = 'PAYT - Residential';
   String _binType = '10 CBM SKIP BIN';
   String? _wheelieBinType;
   DateTime _pickUpDate = DateTime.now();
@@ -41,7 +41,15 @@ class _PickupFormScreenState extends State<PickupFormScreen> {
   double? _latitude;
   double? _longitude;
 
-  final List<String> _customerTypes = ['Residential', 'Commercial'];
+  // Customer types aligned with backend billing model:
+  // PAYT = Pay As You Throw (per-pickup billing via Paystack)
+  // Monthly Billing = fixed monthly invoice cycle
+  final List<String> _customerTypes = [
+    'PAYT - Residential',
+    'PAYT - Business',
+    'Monthly Billing - Residential',
+    'Monthly Billing - Business',
+  ];
   final List<String> _binTypes = [
     '10 CBM SKIP BIN',
     '6CBM SKIP BIN',
