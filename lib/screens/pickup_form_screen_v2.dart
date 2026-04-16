@@ -90,6 +90,8 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     '6CBM SKIP BIN',
     '240 LITRE WHEELIE BIN',
     '120 LITRE WHEELIE BIN',
+    'MAMMOTH (1100 LITRE)',
+    '7-11 TONNE COMPACTOR',
   ];
   final List<String> _wheelieBinTypes = ['Residential', 'Commercial'];
 
