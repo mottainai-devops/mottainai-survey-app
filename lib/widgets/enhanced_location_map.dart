@@ -491,6 +491,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                     centerLat: buildingPolygon.centerLat,
                     centerLon: buildingPolygon.centerLon,
                     lastUpdated: buildingPolygon.lastUpdated,
+                    selectedFlatNo: customer.flatNo,
+                    selectedUserIdentificationNumber: customer.userIdentificationNumber,
                   );
                   widget.onBuildingSelected!(enriched);
                 }
@@ -725,6 +727,9 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
               centerLon: polygon.centerLon,
               lastUpdated: polygon.lastUpdated,
               selectedFlatNo: customer.flatNo,
+              // GIS Step 2.2: pass MCU ID so the pickup form can link the
+              // submission to the correct CustomerAccount via the backend.
+              selectedUserIdentificationNumber: customer.userIdentificationNumber,
             );
             widget.onBuildingSelected!(enriched);
           }
@@ -901,6 +906,8 @@ class _EnhancedLocationMapState extends State<EnhancedLocationMap> {
                                     centerLat: polygon.centerLat,
                                     centerLon: polygon.centerLon,
                                     lastUpdated: polygon.lastUpdated,
+                                    selectedFlatNo: c.flatNo,
+                                    selectedUserIdentificationNumber: c.userIdentificationNumber,
                                   );
                                   widget.onBuildingSelected!(enriched);
                                 }

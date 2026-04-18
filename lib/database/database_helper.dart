@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 14,
+      version: 15,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -61,7 +61,8 @@ class DatabaseHelper {
       lotCode $textNullable,
       lotName $textNullable,
       socioClass $textNullable,
-      arcgisBuildingId $textNullable
+      arcgisBuildingId $textNullable,
+      userIdentificationNumber $textNullable
     )
     ''');
 
@@ -89,6 +90,16 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // v15: Add userIdentificationNumber column to pickups table (GIS Step 2.2).
+    if (oldVersion < 15) {
+      try {
+        await db.execute('ALTER TABLE pickups ADD COLUMN userIdentificationNumber TEXT');
+        print('v15 migration: added userIdentificationNumber column to pickups');
+      } catch (e) {
+        print('userIdentificationNumber column may already exist: $e');
+      }
+    }
+
     // v14: Add arcgisBuildingId column to pickups table.
     if (oldVersion < 14) {
       try {

@@ -22,6 +22,9 @@ class CustomerPoint {
   final String? address;
   final double? lat;
   final double? lon;
+  /// GIS Integration Step 2.2: MCU-XXXXXX customer identity.
+  /// Read from ArcGIS Customer Layer `user_identification_number` field.
+  final String? userIdentificationNumber;
 
   const CustomerPoint({
     this.objectId,
@@ -37,6 +40,7 @@ class CustomerPoint {
     this.address,
     this.lat,
     this.lon,
+    this.userIdentificationNumber,
   });
 
   /// The primary label shown on the map chip.
@@ -101,6 +105,7 @@ class CustomerPoint {
       address: _nullIfEmpty(attrs['address2']?.toString()),
       lat: lat,
       lon: lon,
+      userIdentificationNumber: _nullIfEmpty(attrs['user_identification_number']?.toString()),
     );
   }
 
@@ -127,6 +132,7 @@ class CustomerPoint {
       if (address != null) 'address2': address,
       if (lat != null) 'Lat': lat,
       if (lon != null) 'Long': lon,
+      if (userIdentificationNumber != null) 'user_identification_number': userIdentificationNumber,
     };
   }
 }

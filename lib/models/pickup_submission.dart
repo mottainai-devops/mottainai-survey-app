@@ -28,6 +28,11 @@ class PickupSubmission {
   final String? socioClass;
   // ArcGIS Footprint Polygon building_id (e.g. "8038 LASIKA06 006") — added v3.3.0
   final String? arcgisBuildingId;
+  // GIS Integration Step 2.2: MCU-XXXXXX customer identity — added v3.4.0
+  // Populated when the field worker selects an existing customer from the
+  // building sheet. Sent to the backend so the FormSubmission record is
+  // linked to the CustomerAccount by user_identification_number.
+  final String? userIdentificationNumber;
 
   PickupSubmission({
     this.id,
@@ -57,6 +62,7 @@ class PickupSubmission {
     this.lotName,
     this.socioClass,
     this.arcgisBuildingId,
+    this.userIdentificationNumber,
   });
 
   Map<String, dynamic> toMap() {
@@ -88,6 +94,7 @@ class PickupSubmission {
       'lotName': lotName,
       'socioClass': socioClass,
       'arcgisBuildingId': arcgisBuildingId,
+      'userIdentificationNumber': userIdentificationNumber,
     };
   }
 
@@ -117,6 +124,7 @@ class PickupSubmission {
       'lotName': lotName,
       'socioClass': socioClass,
       'arcgisBuildingId': arcgisBuildingId,
+      'userIdentificationNumber': userIdentificationNumber,
     };
   }
 
@@ -149,6 +157,7 @@ class PickupSubmission {
       lotName: map['lotName'] as String?,
       socioClass: map['socioClass'] as String?,
       arcgisBuildingId: map['arcgisBuildingId'] as String?,
+      userIdentificationNumber: map['userIdentificationNumber'] as String?,
     );
   }
 
@@ -180,6 +189,7 @@ class PickupSubmission {
     String? lotName,
     String? socioClass,
     String? arcgisBuildingId,
+    String? userIdentificationNumber,
   }) {
     return PickupSubmission(
       id: id ?? this.id,
@@ -209,6 +219,7 @@ class PickupSubmission {
       lotName: lotName ?? this.lotName,
       socioClass: socioClass ?? this.socioClass,
       arcgisBuildingId: arcgisBuildingId ?? this.arcgisBuildingId,
+      userIdentificationNumber: userIdentificationNumber ?? this.userIdentificationNumber,
     );
   }
 }

@@ -165,6 +165,11 @@ class ApiService {
       if (pickup.arcgisBuildingId != null && pickup.arcgisBuildingId!.isNotEmpty) {
         request.fields['arcgisBuildingId'] = pickup.arcgisBuildingId!;
       }
+      // GIS Integration Step 2.2: MCU-XXXXXX customer identity — added v3.4.0
+      if (pickup.userIdentificationNumber != null && pickup.userIdentificationNumber!.isNotEmpty) {
+        request.fields['userIdentificationNumber'] = pickup.userIdentificationNumber!;
+        request.fields['user_identification_number'] = pickup.userIdentificationNumber!;
+      }
 
       // Add photo files
       request.files.add(await http.MultipartFile.fromPath(

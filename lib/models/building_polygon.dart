@@ -17,6 +17,11 @@ class BuildingPolygon {
   /// their unit code (flat_no, e.g. R1, C2). If set, the submit flow should
   /// reuse this code instead of generating a new one via getNextUnitCode().
   final String? selectedFlatNo;
+  /// GIS Integration Step 2.2: MCU-XXXXXX identity of the selected customer.
+  /// Populated when an existing customer is selected from the building sheet.
+  /// Passed through to the PickupSubmission so the backend can link the
+  /// FormSubmission to the correct CustomerAccount.
+  final String? selectedUserIdentificationNumber;
 
   BuildingPolygon({
     required this.buildingId,
@@ -32,6 +37,7 @@ class BuildingPolygon {
     required this.lastUpdated,
     this.customerLabels,
     this.selectedFlatNo,
+    this.selectedUserIdentificationNumber,
   });
 
   /// Parse an ArcGIS Feature Service response feature.

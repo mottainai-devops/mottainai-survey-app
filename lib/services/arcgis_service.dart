@@ -179,7 +179,7 @@ class ArcGISService {
     final params = {
       'where': 'building_id IN ($inList)',
       'outFields':
-          'OBJECTID,building_id,flat_no,business_name,first_name,last_name,cust_phone,customer_email,customer_type,status,address2,Lat,Long',
+          'OBJECTID,building_id,flat_no,business_name,first_name,last_name,cust_phone,customer_email,customer_type,status,address2,Lat,Long,user_identification_number',
       'returnGeometry': 'true',
       'outSR': '4326',
       'resultRecordCount': _maxCustomersPerQuery.toString(),

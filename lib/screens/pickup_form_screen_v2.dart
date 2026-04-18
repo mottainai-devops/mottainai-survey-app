@@ -74,6 +74,9 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
   /// their unit code (flat_no, e.g. R1, C2). Used in _submitForm to update
   /// the existing ArcGIS record instead of inserting a new one.
   String? _selectedFlatNo;
+  /// GIS Integration Step 2.2: MCU-XXXXXX identity of the selected customer.
+  /// Populated when an existing customer is selected from the building sheet.
+  String? _selectedUserIdentificationNumber;
   
   // Existing fields
   String _binType = '10 CBM SKIP BIN';
@@ -172,6 +175,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       // When non-null, _submitForm will reuse this code to UPDATE the existing
       // ArcGIS record rather than calling getNextUnitCode() and inserting a new one.
       _selectedFlatNo = polygon.selectedFlatNo;
+      _selectedUserIdentificationNumber = polygon.selectedUserIdentificationNumber;
     });
 
     // Scroll down so the Building Information form fields are visible
@@ -490,6 +494,8 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
         arcgisBuildingId: _buildingIdController.text.trim().isNotEmpty
             ? _buildingIdController.text.trim()
             : null,
+        // GIS Integration Step 2.2: MCU-XXXXXX customer identity — added v3.4.0
+        userIdentificationNumber: _selectedUserIdentificationNumber,
       );
 
       // Save to local database
