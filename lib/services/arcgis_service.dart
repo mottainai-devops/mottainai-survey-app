@@ -270,9 +270,13 @@ class ArcGISService {
 
   /// Upsert a customer point in the ArcGIS Customer Layer.
   ///
-  /// The composite key is [buildingId] + [flatNo] — one record per unit.
-  /// If a record with this key already exists it is updated in-place.
-  /// If none exists, a new feature is added.
+  /// Lookup priority (prevents duplicate creation):
+  ///   1. building_id + flat_no  (exact unit code match — fastest path)
+  ///   2. building_id + cust_phone  (phone fallback — catches cases where
+  ///      flat_no was null or inconsistent on a previous submission)
+  ///
+  /// If either lookup finds an existing record it is updated in-place.
+  /// Only if both lookups return nothing is a new feature inserted.
   ///
   /// [buildingId]  — the parent building's ArcGIS building_id
   /// [flatNo]      — unit code e.g. R1, R2, C1, C2 (derive via getNextUnitCode)
@@ -304,7 +308,7 @@ class ArcGISService {
     print('[ArcGIS] Upserting customer for building: $buildingId unit: ${flatNo ?? "(no unit code)"}');
 
     try {
-      // ── Step 1: check for an existing record with this buildingId + flat_no ──
+      // ── Step 1a: check by building_id + flat_no (primary composite key) ──────
       // The composite key (building_id + flat_no) ensures one point per unit.
       // If flatNo is null (legacy call), fall back to building_id-only lookup.
       final whereClause = flatNo != null
@@ -319,7 +323,44 @@ class ArcGISService {
         'f': 'json',
       };
       final queryData = await _postQuery('$_customerUrl/query', queryParams);
-      final features = queryData['features'] as List<dynamic>? ?? [];
+      List<dynamic> features = queryData['features'] as List<dynamic>? ?? [];
+
+      // ── Step 1b: phone fallback — catches duplicates when flat_no was null ───
+      // If no match by unit code, try matching by phone number within the same
+      // building. This is the safety net that prevents a new record being
+      // created when the same customer is submitted again with a different
+      // (or missing) flat_no.
+      if (features.isEmpty) {
+        final phone = attributes['cust_phone']?.toString().trim() ?? '';
+        if (phone.isNotEmpty) {
+          final phoneWhere =
+              "building_id='${_escapeSql(buildingId)}' AND cust_phone='${_escapeSql(phone)}'";
+          final phoneParams = {
+            'where': phoneWhere,
+            'outFields': 'OBJECTID,flat_no',
+            'returnGeometry': 'false',
+            'resultRecordCount': '1',
+            'orderByFields': 'CreationDate ASC', // keep the oldest (canonical) record
+            'f': 'json',
+          };
+          final phoneData =
+              await _postQuery('$_customerUrl/query', phoneParams);
+          final phoneFeatures =
+              phoneData['features'] as List<dynamic>? ?? [];
+          if (phoneFeatures.isNotEmpty) {
+            // Reuse the existing flat_no from the matched record so the
+            // update also corrects the unit code on the canonical record.
+            final existingFlatNo = (phoneFeatures[0]['attributes']
+                as Map<String, dynamic>)['flat_no']?.toString();
+            if (existingFlatNo != null && existingFlatNo.isNotEmpty) {
+              attrs['flat_no'] = existingFlatNo;
+            }
+            features = phoneFeatures;
+            print('[ArcGIS] Phone fallback matched existing record '
+                '(phone=$phone, flat_no=${attrs["flat_no"]}) — will UPDATE');
+          }
+        }
+      }
 
       if (features.isNotEmpty) {
         // ── Step 2a: UPDATE existing record ──────────────────────────────────
