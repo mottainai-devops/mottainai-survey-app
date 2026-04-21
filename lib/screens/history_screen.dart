@@ -184,6 +184,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
               const SizedBox(height: 12),
 
               // Details
+              if (pickup.userIdentificationNumber != null && pickup.userIdentificationNumber!.isNotEmpty)
+                _buildDetailRow(Icons.badge, 'Customer ID', pickup.userIdentificationNumber!),
               _buildDetailRow(Icons.delete, 'Bin Type', pickup.binType),
               _buildDetailRow(Icons.numbers, 'Quantity', '${pickup.binQuantity}'),
               _buildDetailRow(Icons.calendar_today, 'Date', pickup.pickUpDate),
@@ -291,6 +293,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                 // Building ID
                 _buildDetailSection('Building ID', pickup.buildingId),
+                if (pickup.userIdentificationNumber != null && pickup.userIdentificationNumber!.isNotEmpty)
+                  _buildDetailSection('Customer ID', pickup.userIdentificationNumber!),
 
                 // Supervisor ID — editable for unsynced submissions, read-only for synced
                 if (pickup.synced == 0) ...[

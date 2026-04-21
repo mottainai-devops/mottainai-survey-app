@@ -879,7 +879,26 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
                       },
                     ),
                     const SizedBox(height: 12),
-                    
+
+                    // Customer ID (read-only, auto-populated from ArcGIS when building is selected)
+                    if (_selectedUserIdentificationNumber != null && _selectedUserIdentificationNumber!.isNotEmpty) ...[
+                      TextFormField(
+                        initialValue: _selectedUserIdentificationNumber,
+                        readOnly: true,
+                        decoration: InputDecoration(
+                          labelText: 'Customer ID',
+                          labelStyle: const TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.badge),
+                          filled: true,
+                          fillColor: Colors.blue.shade50,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
                     // Business Name
                     TextFormField(
                       controller: _businessNameController,
