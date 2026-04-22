@@ -191,8 +191,39 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
 
     // Auto-populate socio-economic class from ArcGIS
     await _loadSocioEconomicClass(polygon.buildingId);
+    // Auto-populate customer phone & email from ArcGIS Customer Layer
+    await _loadCustomerContactDetails(polygon.buildingId);
   }
-  
+
+  /// Load customer phone and email from the ArcGIS Customer Layer.
+  /// Populates the Customer Phone and Customer Email fields automatically
+  /// so the backend can send SMS and email notifications to the correct customer.
+  Future<void> _loadCustomerContactDetails(String buildingId) async {
+    try {
+      final customers = await _arcgisService.fetchCustomersForBuilding(buildingId);
+      if (customers.isEmpty) return;
+      // Use the first customer record for this building
+      final customer = customers.first;
+      if (mounted) {
+        setState(() {
+          if (customer.custPhone != null && customer.custPhone!.isNotEmpty) {
+            _customerPhoneController.text = customer.custPhone!;
+          }
+          if (customer.customerEmail != null && customer.customerEmail!.isNotEmpty) {
+            _customerEmailController.text = customer.customerEmail!;
+          }
+          if (customer.businessName != null && customer.businessName!.isNotEmpty &&
+              _businessNameController.text.isEmpty) {
+            _businessNameController.text = customer.businessName!;
+          }
+        });
+      }
+    } catch (e) {
+      // Non-fatal: field worker can still enter phone manually
+      print('[PickupForm] Could not load customer contact details: $e');
+    }
+  }
+
   /// Load socio-economic class from ArcGIS feature layer
   Future<void> _loadSocioEconomicClass(String buildingId) async {
     // Only auto-fill for residential customers
