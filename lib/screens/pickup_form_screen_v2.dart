@@ -91,6 +91,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
   final List<String> _binTypes = [
     '10 CBM SKIP BIN',
     '6CBM SKIP BIN',
+    '27 CBM DINO BIN',
     '240 LITRE WHEELIE BIN',
     '120 LITRE WHEELIE BIN',
     'MAMMOTH (1100 LITRE)',
