@@ -170,6 +170,14 @@ class ApiService {
         request.fields['userIdentificationNumber'] = pickup.userIdentificationNumber!;
         request.fields['user_identification_number'] = pickup.userIdentificationNumber!;
       }
+      // ArcGIS-native identity v3.5.0: unit code (flat_no) and composite Customer ID
+      if (pickup.unitCode != null && pickup.unitCode!.isNotEmpty) {
+        request.fields['unitCode'] = pickup.unitCode!;
+        request.fields['flat_no'] = pickup.unitCode!; // snake_case alias for ArcGIS compatibility
+      }
+      if (pickup.customerId != null && pickup.customerId!.isNotEmpty) {
+        request.fields['customerId'] = pickup.customerId!;
+      }
 
       // Add photo files
       request.files.add(await http.MultipartFile.fromPath(

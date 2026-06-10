@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 15,
+      version: 16,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -62,7 +62,9 @@ class DatabaseHelper {
       lotName $textNullable,
       socioClass $textNullable,
       arcgisBuildingId $textNullable,
-      userIdentificationNumber $textNullable
+      userIdentificationNumber $textNullable,
+      unitCode $textNullable,
+      customerId $textNullable
     )
     ''');
 
@@ -90,6 +92,22 @@ class DatabaseHelper {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // v16: Add unitCode and customerId columns to pickups table (ArcGIS-native identity v3.5.0).
+    if (oldVersion < 16) {
+      try {
+        await db.execute('ALTER TABLE pickups ADD COLUMN unitCode TEXT');
+        print('v16 migration: added unitCode column to pickups');
+      } catch (e) {
+        print('unitCode column may already exist: $e');
+      }
+      try {
+        await db.execute('ALTER TABLE pickups ADD COLUMN customerId TEXT');
+        print('v16 migration: added customerId column to pickups');
+      } catch (e) {
+        print('customerId column may already exist: $e');
+      }
+    }
+
     // v15: Add userIdentificationNumber column to pickups table (GIS Step 2.2).
     if (oldVersion < 15) {
       try {
@@ -207,6 +225,24 @@ class DatabaseHelper {
       {'supervisorId': supervisorId},
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  /// Update unitCode and customerId on a pickup record after ArcGIS unit code resolution.
+  /// Used by pickup_form_screen_v2 to backfill the ArcGIS-native composite Customer ID
+  /// ("${arcgisBuildingId} ${unitCode}") on new-customer pickups (Path B).
+  Future<int> updatePickupIdentity({
+    required String formId,
+    required String createdAt,
+    required String unitCode,
+    required String customerId,
+  }) async {
+    final db = await instance.database;
+    return await db.update(
+      'pickups',
+      {'unitCode': unitCode, 'customerId': customerId},
+      where: 'formId = ? AND createdAt = ?',
+      whereArgs: [formId, createdAt],
     );
   }
 

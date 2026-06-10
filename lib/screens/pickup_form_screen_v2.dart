@@ -528,6 +528,16 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
             : null,
         // GIS Integration Step 2.2: MCU-XXXXXX customer identity — added v3.4.0
         userIdentificationNumber: _selectedUserIdentificationNumber,
+        // ArcGIS-native identity v3.5.0: flat_no unit code and composite Customer ID.
+        // For existing customers _selectedFlatNo is already known; for new customers
+        // the unit code is resolved asynchronously below and backfilled via
+        // DatabaseHelper.updatePickupIdentity().
+        unitCode: _selectedFlatNo,
+        customerId: (_buildingIdController.text.trim().isNotEmpty &&
+                _selectedFlatNo != null &&
+                _selectedFlatNo!.isNotEmpty)
+            ? '${_buildingIdController.text.trim()} $_selectedFlatNo'
+            : null,
       );
 
       // Save to local database
@@ -566,9 +576,25 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
           );
         }
 
-        unitCodeFuture.then((unitCode) {
+        unitCodeFuture.then((unitCode) async {
           debugPrint('[ArcGIS] Using unit code $unitCode for $buildingId '
               '(${existingFlatNo != null ? "update" : "insert"} path)');
+          // ArcGIS-native identity v3.5.0: backfill unitCode and customerId
+          // on the saved pickup record for new customers (Path B only).
+          if (existingFlatNo == null || existingFlatNo.isEmpty) {
+            final compositeId = '$buildingId $unitCode';
+            try {
+              await DatabaseHelper.instance.updatePickupIdentity(
+                formId: pickup.formId,
+                createdAt: pickup.createdAt,
+                unitCode: unitCode,
+                customerId: compositeId,
+              );
+              debugPrint('[ArcGIS] Backfilled pickup identity: customerId=$compositeId');
+            } catch (e) {
+              debugPrint('[ArcGIS] Failed to backfill pickup identity: $e');
+            }
+          }
           return _arcgisService.addCustomerToLayer(
             buildingId: buildingId,
             lat: lat,

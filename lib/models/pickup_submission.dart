@@ -33,6 +33,14 @@ class PickupSubmission {
   // building sheet. Sent to the backend so the FormSubmission record is
   // linked to the CustomerAccount by user_identification_number.
   final String? userIdentificationNumber;
+  // ArcGIS-native Customer ID — added v3.5.0
+  // flat_no (unit code) within the building, e.g. R1, R2, C1.
+  // Together with arcgisBuildingId forms the canonical Customer ID:
+  // "${arcgisBuildingId} ${unitCode}" e.g. "8038 LASIKA06 006 R1"
+  final String? unitCode;
+  // Derived composite Customer ID: "${arcgisBuildingId} ${unitCode}"
+  // Stored directly for convenience and backend indexing.
+  final String? customerId;
 
   PickupSubmission({
     this.id,
@@ -63,6 +71,8 @@ class PickupSubmission {
     this.socioClass,
     this.arcgisBuildingId,
     this.userIdentificationNumber,
+    this.unitCode,
+    this.customerId,
   });
 
   Map<String, dynamic> toMap() {
@@ -95,6 +105,8 @@ class PickupSubmission {
       'socioClass': socioClass,
       'arcgisBuildingId': arcgisBuildingId,
       'userIdentificationNumber': userIdentificationNumber,
+      'unitCode': unitCode,
+      'customerId': customerId,
     };
   }
 
@@ -125,6 +137,8 @@ class PickupSubmission {
       'socioClass': socioClass,
       'arcgisBuildingId': arcgisBuildingId,
       'userIdentificationNumber': userIdentificationNumber,
+      'unitCode': unitCode,
+      'customerId': customerId,
     };
   }
 
@@ -158,6 +172,8 @@ class PickupSubmission {
       socioClass: map['socioClass'] as String?,
       arcgisBuildingId: map['arcgisBuildingId'] as String?,
       userIdentificationNumber: map['userIdentificationNumber'] as String?,
+      unitCode: map['unitCode'] as String?,
+      customerId: map['customerId'] as String?,
     );
   }
 
@@ -190,6 +206,8 @@ class PickupSubmission {
     String? socioClass,
     String? arcgisBuildingId,
     String? userIdentificationNumber,
+    String? unitCode,
+    String? customerId,
   }) {
     return PickupSubmission(
       id: id ?? this.id,
@@ -220,6 +238,8 @@ class PickupSubmission {
       socioClass: socioClass ?? this.socioClass,
       arcgisBuildingId: arcgisBuildingId ?? this.arcgisBuildingId,
       userIdentificationNumber: userIdentificationNumber ?? this.userIdentificationNumber,
+      unitCode: unitCode ?? this.unitCode,
+      customerId: customerId ?? this.customerId,
     );
   }
 }
