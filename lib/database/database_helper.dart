@@ -21,7 +21,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
@@ -89,9 +89,80 @@ class DatabaseHelper {
     await db.execute('''
     CREATE INDEX idx_polygon_location ON cached_polygons(centerLat, centerLon)
     ''');
+
+    // v17: Pickup form draft persistence table.
+    // Stores a single in-progress form draft so the "before photo" path and all
+    // filled fields survive an OS kill or background eviction during a long session.
+    await db.execute('''
+    CREATE TABLE pickup_drafts (
+      id $idType,
+      firstPhotoPath $textNullable,
+      secondPhotoPath $textNullable,
+      supervisorId $textNullable,
+      buildingId $textNullable,
+      businessName $textNullable,
+      customerPhone $textNullable,
+      customerEmail $textNullable,
+      customerAddress $textNullable,
+      binType $textNullable,
+      wheelieBinType $textNullable,
+      binQuantity $textNullable,
+      incidentReport $textNullable,
+      customerType $textNullable,
+      billingType $textNullable,
+      socioClass $textNullable,
+      companyId $textNullable,
+      companyName $textNullable,
+      lotCode $textNullable,
+      lotName $textNullable,
+      pickUpDate $textNullable,
+      latitude REAL,
+      longitude REAL,
+      savedAt $textType
+    )
+    ''');
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // v17: Add pickup_drafts table for form draft persistence.
+    // This prevents loss of the "before photo" path when the OS kills the app
+    // or evicts it from memory during a long pickup session.
+    if (oldVersion < 17) {
+      try {
+        await db.execute('''
+        CREATE TABLE IF NOT EXISTS pickup_drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          firstPhotoPath TEXT,
+          secondPhotoPath TEXT,
+          supervisorId TEXT,
+          buildingId TEXT,
+          businessName TEXT,
+          customerPhone TEXT,
+          customerEmail TEXT,
+          customerAddress TEXT,
+          binType TEXT,
+          wheelieBinType TEXT,
+          binQuantity TEXT,
+          incidentReport TEXT,
+          customerType TEXT,
+          billingType TEXT,
+          socioClass TEXT,
+          companyId TEXT,
+          companyName TEXT,
+          lotCode TEXT,
+          lotName TEXT,
+          pickUpDate TEXT,
+          latitude REAL,
+          longitude REAL,
+          savedAt TEXT NOT NULL
+        )
+        ''');
+        print('v17 migration: created pickup_drafts table');
+      } catch (e) {
+        print('pickup_drafts table may already exist: $e');
+      }
+    }
+
     // v16: Add unitCode and customerId columns to pickups table (ArcGIS-native identity v3.5.0).
     if (oldVersion < 16) {
       try {
@@ -261,6 +332,47 @@ class DatabaseHelper {
       'SELECT COUNT(*) as count FROM pickups WHERE synced = 0',
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  // ========== Draft Persistence Methods (v17) ==========
+  //
+  // A single row in pickup_drafts represents the current in-progress form state.
+  // The table is designed for at most one row at a time (the active draft).
+  // On every save the table is cleared and re-inserted so there is never more
+  // than one draft row.
+
+  /// Persist the current form state as a draft so it can be recovered after
+  /// an OS kill or background eviction.  Call this whenever a photo is captured
+  /// and whenever the app goes to background (AppLifecycleState.paused).
+  Future<void> saveDraft(Map<String, dynamic> draftData) async {
+    final db = await instance.database;
+    // Delete any existing draft first (only one draft at a time)
+    await db.delete('pickup_drafts');
+    draftData['savedAt'] = DateTime.now().toIso8601String();
+    await db.insert('pickup_drafts', draftData);
+    print('[Draft] Draft saved at ${draftData['savedAt']}');
+  }
+
+  /// Load the most recently saved draft, or null if none exists.
+  Future<Map<String, dynamic>?> loadDraft() async {
+    final db = await instance.database;
+    final result = await db.query(
+      'pickup_drafts',
+      orderBy: 'savedAt DESC',
+      limit: 1,
+    );
+    if (result.isNotEmpty) {
+      print('[Draft] Draft loaded, savedAt=${result.first['savedAt']}');
+      return result.first;
+    }
+    return null;
+  }
+
+  /// Remove the draft after a successful submit or explicit user discard.
+  Future<void> clearDraft() async {
+    final db = await instance.database;
+    final count = await db.delete('pickup_drafts');
+    print('[Draft] Draft cleared ($count row(s) removed)');
   }
 
   // ========== Polygon Cache Methods ==========

@@ -28,7 +28,8 @@ class PickupFormScreenV2 extends StatefulWidget {
   State<PickupFormScreenV2> createState() => _PickupFormScreenV2State();
 }
 
-class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
+class _PickupFormScreenV2State extends State<PickupFormScreenV2>
+    with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
   final _supervisorIdController = TextEditingController();
@@ -101,16 +102,24 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
 
   final ImagePicker _picker = ImagePicker();
 
+  /// True once the user has captured at least the first photo — used by
+  /// PopScope to decide whether to show the discard-draft confirmation dialog.
+  bool _hasDraft = false;
+
   @override
   void initState() {
     super.initState();
-    
+    // Register lifecycle observer so we can save draft when app goes to background.
+    WidgetsBinding.instance.addObserver(this);
     // Load lots from API (companies will be extracted from lots)
     _loadLots();
+    // Restore any in-progress draft from a previous session.
+    _loadDraft();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.dispose();
     _supervisorIdController.dispose();
     _buildingIdController.dispose();
@@ -121,6 +130,19 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     _binQuantityController.dispose();
     _incidentReportController.dispose();
     super.dispose();
+  }
+
+  // ── App lifecycle: save draft when app goes to background ─────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      // Fire-and-forget: persist current form state so the before-photo path
+      // survives an OS kill or eviction from memory.
+      if (_hasDraft) {
+        _saveDraft();
+      }
+    }
   }
 
   // ignore: unused_element
@@ -300,6 +322,145 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     }
   }
 
+  // ── Draft persistence helpers ─────────────────────────────────────
+
+  /// Serialize the current form state and persist it to SQLite.
+  /// Called after each photo capture and when the app goes to background.
+  Future<void> _saveDraft() async {
+    try {
+      await DatabaseHelper.instance.saveDraft({
+        'firstPhotoPath': _firstPhoto?.path,
+        'secondPhotoPath': _secondPhoto?.path,
+        'supervisorId': _supervisorIdController.text,
+        'buildingId': _buildingIdController.text,
+        'businessName': _businessNameController.text,
+        'customerPhone': _customerPhoneController.text,
+        'customerEmail': _customerEmailController.text,
+        'customerAddress': _customerAddressController.text,
+        'binType': _binType,
+        'wheelieBinType': _wheelieBinType,
+        'binQuantity': _binQuantityController.text,
+        'incidentReport': _incidentReportController.text,
+        'customerType': _customerType,
+        'billingType': _billingType,
+        'socioClass': _socioClass,
+        'companyId': _selectedCompany?.companyId,
+        'companyName': _selectedCompany?.companyName,
+        'lotCode': _selectedLot?.lotCode,
+        'lotName': _selectedLot?.lotName,
+        'pickUpDate': _pickUpDate.toIso8601String(),
+        'latitude': _latitude,
+        'longitude': _longitude,
+      });
+    } catch (e) {
+      debugPrint('[Draft] Failed to save draft: $e');
+    }
+  }
+
+  /// Restore a previously saved draft into the form state.
+  /// Called from initState — runs after the first frame so setState is safe.
+  Future<void> _loadDraft() async {
+    try {
+      final draft = await DatabaseHelper.instance.loadDraft();
+      if (draft == null) return;
+
+      // Restore photo file references (files are already on disk)
+      File? firstPhoto;
+      File? secondPhoto;
+      if (draft['firstPhotoPath'] != null) {
+        final f = File(draft['firstPhotoPath'] as String);
+        if (await f.exists()) firstPhoto = f;
+      }
+      if (draft['secondPhotoPath'] != null) {
+        final f = File(draft['secondPhotoPath'] as String);
+        if (await f.exists()) secondPhoto = f;
+      }
+
+      // Only restore if there is at least a first photo to recover
+      if (firstPhoto == null) {
+        debugPrint('[Draft] Draft found but first photo file missing — discarding stale draft');
+        await DatabaseHelper.instance.clearDraft();
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _firstPhoto = firstPhoto;
+        _secondPhoto = secondPhoto;
+        _hasDraft = true;
+
+        // Restore text fields
+        if (draft['supervisorId'] != null) _supervisorIdController.text = draft['supervisorId'] as String;
+        if (draft['buildingId'] != null) _buildingIdController.text = draft['buildingId'] as String;
+        if (draft['businessName'] != null) _businessNameController.text = draft['businessName'] as String;
+        if (draft['customerPhone'] != null) _customerPhoneController.text = draft['customerPhone'] as String;
+        if (draft['customerEmail'] != null) _customerEmailController.text = draft['customerEmail'] as String;
+        if (draft['customerAddress'] != null) _customerAddressController.text = draft['customerAddress'] as String;
+        if (draft['binQuantity'] != null) _binQuantityController.text = draft['binQuantity'] as String;
+        if (draft['incidentReport'] != null) _incidentReportController.text = draft['incidentReport'] as String;
+
+        // Restore dropdown / enum values
+        if (draft['binType'] != null) _binType = draft['binType'] as String;
+        if (draft['wheelieBinType'] != null) _wheelieBinType = draft['wheelieBinType'] as String?;
+        if (draft['customerType'] != null) _customerType = draft['customerType'] as String;
+        if (draft['billingType'] != null) _billingType = draft['billingType'] as String;
+        if (draft['socioClass'] != null) _socioClass = draft['socioClass'] as String;
+
+        // Restore coordinates
+        if (draft['latitude'] != null) _latitude = (draft['latitude'] as num).toDouble();
+        if (draft['longitude'] != null) _longitude = (draft['longitude'] as num).toDouble();
+
+        // Restore pick-up date
+        if (draft['pickUpDate'] != null) {
+          try {
+            _pickUpDate = DateTime.parse(draft['pickUpDate'] as String);
+          } catch (_) {}
+        }
+      });
+
+      // Show a non-intrusive banner so the field worker knows the draft was restored
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.restore, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Draft restored — your before photo has been recovered.',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.blue.shade700,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Draft] Failed to load draft: $e');
+    }
+  }
+
+  /// Remove the draft after a successful submit or explicit user discard.
+  Future<void> _clearDraft() async {
+    try {
+      await DatabaseHelper.instance.clearDraft();
+      if (mounted) {
+        setState(() {
+          _hasDraft = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[Draft] Failed to clear draft: $e');
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────────
+
   Future<void> _pickImage(bool isFirst) async {
     try {
       final XFile? image = await _picker.pickImage(
@@ -321,7 +482,10 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
           } else {
             _secondPhoto = savedImage;
           }
+          _hasDraft = true;
         });
+        // Persist the photo path to SQLite immediately so it survives an OS kill.
+        await _saveDraft();
       }
     } catch (e) {
       if (mounted) {
@@ -632,6 +796,9 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
       }
       // ─────────────────────────────────────────────────────────────────────
 
+      // Clear the draft now that the pickup has been saved successfully.
+      await _clearDraft();
+
       if (mounted) {
         // Try to sync immediately if online
         syncProvider.syncPendingPickups();
@@ -663,9 +830,49 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
     }
   }
 
+  /// Show a confirmation dialog before discarding an in-progress draft.
+  /// Returns true if the user confirms discard, false if they want to stay.
+  Future<bool> _confirmDiscard() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Discard draft?'),
+        content: const Text(
+          'You have an unsaved pickup in progress (before photo captured). '
+          'Going back will discard your draft. Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _clearDraft();
+    }
+    return confirmed == true;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      // Allow back navigation only after user confirms discard (or no draft).
+      canPop: !_hasDraft,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return; // Already popped (no draft case)
+        final shouldPop = await _confirmDiscard();
+        if (shouldPop && mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('New Pickup'),
         actions: [
@@ -1416,6 +1623,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2> {
           ],
         ),
       ),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 }
