@@ -123,7 +123,10 @@ class ApiService {
       // Customer contact fields (fixed in v3.2.5 — previously sent as empty strings)
       request.fields['customerName'] = pickup.customerName;
       request.fields['customerPhone'] = pickup.customerPhone;
-      request.fields['customerEmail'] = pickup.customerEmail;
+      // Only send customerEmail when non-empty to avoid writing empty strings to CustomerData
+      if (pickup.customerEmail.isNotEmpty) {
+        request.fields['customerEmail'] = pickup.customerEmail;
+      }
       request.fields['customerAddress'] = pickup.customerAddress;
 
       // Pickup fields
