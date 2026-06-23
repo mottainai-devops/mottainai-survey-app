@@ -62,7 +62,9 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
   final List<String> _customerTypes = ['Residential', 'Business'];
   
   // Socio-Economic Class (for Residential customers only)
-  String _socioClass = 'medium';
+  // null = not yet selected (user must choose explicitly; auto-fill sets a value).
+  // Item 1 (Tranche 5B): default is null so the Submit guard can detect unselected state.
+  String? _socioClass;
   final List<String> _socioClasses = ['low', 'medium', 'high'];
   bool _isSocioClassAutoFilled = false;
   bool _isLoadingSocioClass = false;
@@ -405,7 +407,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
         if (draft['wheelieBinType'] != null) _wheelieBinType = draft['wheelieBinType'] as String?;
         if (draft['customerType'] != null) _customerType = draft['customerType'] as String;
         if (draft['billingType'] != null) _billingType = draft['billingType'] as String;
-        if (draft['socioClass'] != null) _socioClass = draft['socioClass'] as String;
+        if (draft['socioClass'] != null) _socioClass = draft['socioClass'] as String?;
 
         // Restore coordinates
         if (draft['latitude'] != null) _latitude = (draft['latitude'] as num).toDouble();
@@ -635,6 +637,19 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
       return;
     }
 
+    // Item 1 (Tranche 5B): residential pickups must have an explicit socio-class.
+    // Null means ArcGIS returned nothing and the user has not selected one manually.
+    if (_customerType == 'Residential' && (_socioClass == null || _socioClass!.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a Socio-Economic Class before submitting'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isSubmitting = true;
     });
@@ -685,6 +700,7 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
             : (authProvider.user!.companyName ?? _selectedCompany?.companyName),
         lotCode: _selectedLot?.lotCode,
         lotName: _selectedLot?.lotName,
+        // _socioClass is guaranteed non-null here for Residential (guard above).
         socioClass: _customerType == 'Residential' ? _socioClass : null,
         // arcgisBuildingId = ArcGIS Footprint Polygon building_id — added v3.3.0
         arcgisBuildingId: _buildingIdController.text.trim().isNotEmpty
@@ -1390,22 +1406,48 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
                       ),
                     )
                   else
-                    Row(
-                      children: _socioClasses.map((socioClass) {
-                        return Expanded(
-                          child: RadioListTile<String>(
-                            title: Text(socioClass.toUpperCase()),
-                            value: socioClass,
-                            groupValue: _socioClass,
-                            onChanged: (value) {
-                              setState(() {
-                                _socioClass = value!;
-                                _isSocioClassAutoFilled = false; // Mark as manually changed
-                              });
-                            },
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Item 1 (Tranche 5B): show a red prompt when no value selected yet.
+                        if (_socioClass == null)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.red.shade300),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 16),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Selection required — tap one of the options below',
+                                  style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+                                ),
+                              ],
+                            ),
                           ),
-                        );
-                      }).toList(),
+                        Row(
+                          children: _socioClasses.map((socioClass) {
+                            return Expanded(
+                              child: RadioListTile<String>(
+                                title: Text(socioClass.toUpperCase()),
+                                value: socioClass,
+                                groupValue: _socioClass,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _socioClass = value;
+                                    _isSocioClassAutoFilled = false; // Mark as manually changed
+                                  });
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
                     ),
                   const SizedBox(height: 16),
                 ],
