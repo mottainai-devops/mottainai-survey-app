@@ -513,7 +513,11 @@ class _PickupFormScreenV2State extends State<PickupFormScreenV2>
       }
       
       final userId = authProvider.user!.id;
-      final lots = await _lotService.getLots(userId);
+      final token = authProvider.token;
+      if (token == null || token.isEmpty) {
+        throw Exception('Please sign in again to load operational lots.');
+      }
+      final lots = await _lotService.getLots(userId, token: token);
       
       // Extract unique companies from lots
       final companiesMap = <String, Company>{};
