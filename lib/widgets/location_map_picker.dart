@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart' as loc;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/arcgis_mobile_config.dart';
 class LocationMapPicker extends StatefulWidget {
   final Function(double lat, double lon) onLocationSelected;
   final double? initialLat;
@@ -29,8 +30,7 @@ class _LocationMapPickerState extends State<LocationMapPicker> {
 
   // ArcGIS API Key (reserved for future use)
   // ignore: unused_field
-  final String _arcgisApiKey = 'AAPTxy8BH1VEsoebNVZXo8HurDkT4HeplNOm_pLCsV2-wHXD7esJFqWCGo3oDxTaOVO68fIzhjQ4gSKqccl-uynuHunhlN5t3E_x5N010mOKYQRyFm3vYXqvila3dJ3Ax81DMK2WyxFt6mqhwzxdkdhmm7USv7-cQi07L_22-MTRC95Rns1BHueP3kR_yXyAyh1WEFAm9Q7KFELPkRpT_5cjWvbDo2rWZhtHOb5xFr_7bOA.AT1_n5wNkDcc';
-
+  final String _arcgisApiKey = arcgisMobileApiKey();
   @override
   void initState() {
     super.initState();
